@@ -7,4 +7,5 @@ exclude-files = [
     "*/build.rs",
     "*/examples/*",
     "*/main.rs",
+    "*/mcp_server.rs",
 ]
