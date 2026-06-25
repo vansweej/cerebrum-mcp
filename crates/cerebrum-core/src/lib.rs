@@ -2,6 +2,7 @@ pub mod cortex;
 pub mod decay;
 pub mod embedder;
 pub mod error;
+pub mod lancedb_cortex;
 pub mod models;
 pub mod orchestrator;
 pub mod promotion;
@@ -17,6 +18,7 @@ pub use decay::{
 };
 pub use embedder::{Embedder, MockEmbedder};
 pub use error::{CerebrumError, Result};
+pub use lancedb_cortex::LanceDBCortex;
 pub use models::{MemoryEntry, MemoryId, MemoryScope, MemoryTier};
 pub use orchestrator::MemoryOrchestrator;
 pub use promotion::{
