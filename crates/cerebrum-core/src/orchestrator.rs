@@ -1,8 +1,8 @@
+use crate::cortex::CortexMemory;
+use crate::embedder::Embedder;
 use crate::error::Result;
 use crate::models::{MemoryEntry, MemoryId, MemoryTier};
 use crate::synapse::SynapseMemory;
-use crate::cortex::CortexMemory;
-use crate::embedder::Embedder;
 use crate::traits::MemoryStore;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -48,7 +48,7 @@ impl MemoryOrchestrator {
         metadata: HashMap<String, String>,
     ) -> Result<MemoryId> {
         let id = MemoryId::new();
-        
+
         // Generate embedding
         let embedding = self.embedder.embed(&content).await?;
 
@@ -57,7 +57,7 @@ impl MemoryOrchestrator {
             .embedding(embedding)
             .tier(MemoryTier::Synapse)
             .build();
-        
+
         entry.metadata = metadata;
 
         // Store in Synapse
@@ -125,7 +125,7 @@ impl MemoryOrchestrator {
         } else {
             Err(crate::error::CerebrumError::NotFound(format!(
                 "Memory {} not found in Synapse",
-                id.to_string()
+                id
             )))
         }
     }
@@ -256,10 +256,7 @@ mod tests {
         assert_eq!(orchestrator.synapse_len().await.unwrap(), 1);
         assert_eq!(orchestrator.cortex_len().await.unwrap(), 0);
 
-        orchestrator
-            .memorize(id)
-            .await
-            .expect("Failed to memorize");
+        orchestrator.memorize(id).await.expect("Failed to memorize");
 
         assert_eq!(orchestrator.synapse_len().await.unwrap(), 0);
         assert_eq!(orchestrator.cortex_len().await.unwrap(), 1);
@@ -279,10 +276,7 @@ mod tests {
 
         assert_eq!(orchestrator.synapse_len().await.unwrap(), 1);
 
-        orchestrator
-            .forget(id)
-            .await
-            .expect("Failed to forget");
+        orchestrator.forget(id).await.expect("Failed to forget");
 
         assert_eq!(orchestrator.synapse_len().await.unwrap(), 0);
     }
@@ -385,10 +379,7 @@ mod tests {
             .expect("Failed to remember");
 
         // Promote to Cortex (now in both tiers)
-        orchestrator
-            .memorize(id)
-            .await
-            .expect("Failed to memorize");
+        orchestrator.memorize(id).await.expect("Failed to memorize");
 
         // Store another copy in Synapse
         let _id2 = orchestrator

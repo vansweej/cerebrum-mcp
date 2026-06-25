@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+use std::fmt;
 
 /// Unique identifier for a memory entry.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -17,16 +18,17 @@ impl MemoryId {
             .map_err(|e| crate::error::CerebrumError::Validation(format!("Invalid UUID: {}", e)))?;
         Ok(Self(uuid))
     }
-
-    /// Convert to string representation.
-    pub fn to_string(&self) -> String {
-        self.0.to_string()
-    }
 }
 
 impl Default for MemoryId {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl fmt::Display for MemoryId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 

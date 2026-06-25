@@ -1,6 +1,4 @@
-use cerebrum_core::{
-    MemoryEntry, MemoryId, MemoryTier, MockEmbedder, Embedder, utils,
-};
+use cerebrum_core::{utils, Embedder, MemoryEntry, MemoryId, MemoryTier, MockEmbedder};
 
 #[test]
 fn test_memory_id_generation() {
@@ -67,9 +65,7 @@ fn test_memory_entry_builder_salience_clamping() {
         .build();
     assert_eq!(entry1.salience, 1.0);
 
-    let entry2 = MemoryEntry::builder(id, content)
-        .salience(-0.5)
-        .build();
+    let entry2 = MemoryEntry::builder(id, content).salience(-0.5).build();
     assert_eq!(entry2.salience, 0.0);
 }
 
@@ -174,10 +170,7 @@ async fn test_mock_embedder_different_texts() {
 #[tokio::test]
 async fn test_mock_embedder_normalized() {
     let embedder = MockEmbedder::new();
-    let embedding = embedder
-        .embed("Test text")
-        .await
-        .expect("Failed to embed");
+    let embedding = embedder.embed("Test text").await.expect("Failed to embed");
 
     // Check that embedding is approximately unit length
     let norm: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
@@ -219,5 +212,3 @@ fn test_memory_entry_builder_multiple_metadata() {
     assert_eq!(entry.metadata.get("key2"), Some(&"value2".to_string()));
     assert_eq!(entry.metadata.get("key3"), Some(&"value3".to_string()));
 }
-
-

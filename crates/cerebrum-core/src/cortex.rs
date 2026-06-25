@@ -1,11 +1,11 @@
+use crate::embedder::Embedder;
 use crate::error::Result;
 use crate::models::{MemoryEntry, MemoryId};
 use crate::traits::MemoryStore;
-use crate::embedder::Embedder;
 use async_trait::async_trait;
-use std::sync::Arc;
 use parking_lot::RwLock;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Persistent long-term memory storage backed by LanceDB (Cortex tier).
 ///
@@ -46,10 +46,14 @@ impl CortexMemory {
     pub async fn search_by_salience(&self, limit: usize) -> Result<Vec<MemoryEntry>> {
         let memories = self.memories.read();
         let mut entries: Vec<_> = memories.values().cloned().collect();
-        
+
         // Sort by salience (descending)
-        entries.sort_by(|a, b| b.salience.partial_cmp(&a.salience).unwrap_or(std::cmp::Ordering::Equal));
-        
+        entries.sort_by(|a, b| {
+            b.salience
+                .partial_cmp(&a.salience)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
         Ok(entries.into_iter().take(limit).collect())
     }
 
@@ -122,7 +126,11 @@ impl MemoryStore for CortexMemory {
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         // Return top N
-        Ok(scored.into_iter().take(limit).map(|(entry, _)| entry).collect())
+        Ok(scored
+            .into_iter()
+            .take(limit)
+            .map(|(entry, _)| entry)
+            .collect())
     }
 
     async fn delete(&self, id: &MemoryId) -> Result<()> {
@@ -141,7 +149,7 @@ mod tests {
         let cortex = CortexMemory::new("/tmp/test_cortex", embedder)
             .await
             .expect("Failed to create CortexMemory");
-        
+
         assert!(cortex.is_empty().await.unwrap());
     }
 

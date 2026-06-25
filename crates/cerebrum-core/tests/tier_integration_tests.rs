@@ -85,8 +85,7 @@ async fn test_synapse_salience_ranking() {
 
 #[tokio::test]
 async fn test_cortex_basic_workflow() {
-    let embedder: Arc<dyn cerebrum_core::Embedder> =
-        Arc::new(MockEmbedder::new());
+    let embedder: Arc<dyn cerebrum_core::Embedder> = Arc::new(MockEmbedder::new());
     let cortex = CortexMemory::new("/tmp/test_cortex_basic", embedder)
         .await
         .unwrap();
@@ -105,8 +104,7 @@ async fn test_cortex_basic_workflow() {
 
 #[tokio::test]
 async fn test_cortex_search_by_salience() {
-    let embedder: Arc<dyn cerebrum_core::Embedder> =
-        Arc::new(MockEmbedder::new());
+    let embedder: Arc<dyn cerebrum_core::Embedder> = Arc::new(MockEmbedder::new());
     let cortex = CortexMemory::new("/tmp/test_cortex_salience", embedder)
         .await
         .unwrap();
@@ -131,8 +129,7 @@ async fn test_cortex_search_by_salience() {
 
 #[tokio::test]
 async fn test_cortex_persistence_simulation() {
-    let embedder: Arc<dyn cerebrum_core::Embedder> =
-        Arc::new(MockEmbedder::new());
+    let embedder: Arc<dyn cerebrum_core::Embedder> = Arc::new(MockEmbedder::new());
     let cortex = CortexMemory::new("/tmp/test_cortex_persist", embedder)
         .await
         .unwrap();
@@ -157,8 +154,7 @@ async fn test_cortex_persistence_simulation() {
 
 #[tokio::test]
 async fn test_orchestrator_remember_and_recall() {
-    let embedder: Arc<dyn cerebrum_core::Embedder> =
-        Arc::new(MockEmbedder::new());
+    let embedder: Arc<dyn cerebrum_core::Embedder> = Arc::new(MockEmbedder::new());
     let orchestrator = MemoryOrchestrator::new("/tmp/test_orch_basic", embedder)
         .await
         .unwrap();
@@ -177,17 +173,13 @@ async fn test_orchestrator_remember_and_recall() {
     assert_eq!(orchestrator.synapse_len().await.unwrap(), 2);
 
     // Recall should find both
-    let results = orchestrator
-        .recall("memory".to_string(), 10)
-        .await
-        .unwrap();
+    let results = orchestrator.recall("memory".to_string(), 10).await.unwrap();
     assert_eq!(results.len(), 2);
 }
 
 #[tokio::test]
 async fn test_orchestrator_promotion_workflow() {
-    let embedder: Arc<dyn cerebrum_core::Embedder> =
-        Arc::new(MockEmbedder::new());
+    let embedder: Arc<dyn cerebrum_core::Embedder> = Arc::new(MockEmbedder::new());
     let orchestrator = MemoryOrchestrator::new("/tmp/test_orch_promote", embedder)
         .await
         .unwrap();
@@ -210,8 +202,7 @@ async fn test_orchestrator_promotion_workflow() {
 
 #[tokio::test]
 async fn test_orchestrator_forget_from_synapse() {
-    let embedder: Arc<dyn cerebrum_core::Embedder> =
-        Arc::new(MockEmbedder::new());
+    let embedder: Arc<dyn cerebrum_core::Embedder> = Arc::new(MockEmbedder::new());
     let orchestrator = MemoryOrchestrator::new("/tmp/test_orch_forget_syn", embedder)
         .await
         .unwrap();
@@ -230,8 +221,7 @@ async fn test_orchestrator_forget_from_synapse() {
 
 #[tokio::test]
 async fn test_orchestrator_forget_from_cortex() {
-    let embedder: Arc<dyn cerebrum_core::Embedder> =
-        Arc::new(MockEmbedder::new());
+    let embedder: Arc<dyn cerebrum_core::Embedder> = Arc::new(MockEmbedder::new());
     let orchestrator = MemoryOrchestrator::new("/tmp/test_orch_forget_cor", embedder)
         .await
         .unwrap();
@@ -251,8 +241,7 @@ async fn test_orchestrator_forget_from_cortex() {
 
 #[tokio::test]
 async fn test_orchestrator_blended_search() {
-    let embedder: Arc<dyn cerebrum_core::Embedder> =
-        Arc::new(MockEmbedder::new());
+    let embedder: Arc<dyn cerebrum_core::Embedder> = Arc::new(MockEmbedder::new());
     let orchestrator = MemoryOrchestrator::new("/tmp/test_orch_blend", embedder)
         .await
         .unwrap();
@@ -272,18 +261,14 @@ async fn test_orchestrator_blended_search() {
     orchestrator.memorize(id2).await.unwrap();
 
     // Recall should find both
-    let results = orchestrator
-        .recall("memory".to_string(), 10)
-        .await
-        .unwrap();
+    let results = orchestrator.recall("memory".to_string(), 10).await.unwrap();
 
     assert_eq!(results.len(), 2);
 }
 
 #[tokio::test]
 async fn test_orchestrator_end_session_clears_synapse() {
-    let embedder: Arc<dyn cerebrum_core::Embedder> =
-        Arc::new(MockEmbedder::new());
+    let embedder: Arc<dyn cerebrum_core::Embedder> = Arc::new(MockEmbedder::new());
     let orchestrator = MemoryOrchestrator::new("/tmp/test_orch_end_session", embedder)
         .await
         .unwrap();
@@ -309,8 +294,7 @@ async fn test_orchestrator_end_session_clears_synapse() {
 
 #[tokio::test]
 async fn test_orchestrator_end_session_auto_promotes() {
-    let embedder: Arc<dyn cerebrum_core::Embedder> =
-        Arc::new(MockEmbedder::new());
+    let embedder: Arc<dyn cerebrum_core::Embedder> = Arc::new(MockEmbedder::new());
     let orchestrator = MemoryOrchestrator::new("/tmp/test_orch_auto_promote", embedder)
         .await
         .unwrap();
@@ -354,8 +338,7 @@ async fn test_orchestrator_end_session_auto_promotes() {
 
 #[tokio::test]
 async fn test_orchestrator_metadata_preservation() {
-    let embedder: Arc<dyn cerebrum_core::Embedder> =
-        Arc::new(MockEmbedder::new());
+    let embedder: Arc<dyn cerebrum_core::Embedder> = Arc::new(MockEmbedder::new());
     let orchestrator = MemoryOrchestrator::new("/tmp/test_orch_metadata", embedder)
         .await
         .unwrap();
@@ -375,8 +358,7 @@ async fn test_orchestrator_metadata_preservation() {
 
 #[tokio::test]
 async fn test_orchestrator_embedding_generation() {
-    let embedder: Arc<dyn cerebrum_core::Embedder> =
-        Arc::new(MockEmbedder::new());
+    let embedder: Arc<dyn cerebrum_core::Embedder> = Arc::new(MockEmbedder::new());
     let orchestrator = MemoryOrchestrator::new("/tmp/test_orch_embedding", embedder)
         .await
         .unwrap();
@@ -393,8 +375,7 @@ async fn test_orchestrator_embedding_generation() {
 
 #[tokio::test]
 async fn test_orchestrator_tier_assignment() {
-    let embedder: Arc<dyn cerebrum_core::Embedder> =
-        Arc::new(MockEmbedder::new());
+    let embedder: Arc<dyn cerebrum_core::Embedder> = Arc::new(MockEmbedder::new());
     let orchestrator = MemoryOrchestrator::new("/tmp/test_orch_tier", embedder)
         .await
         .unwrap();
@@ -415,8 +396,7 @@ async fn test_orchestrator_tier_assignment() {
 
 #[tokio::test]
 async fn test_orchestrator_multiple_promotions() {
-    let embedder: Arc<dyn cerebrum_core::Embedder> =
-        Arc::new(MockEmbedder::new());
+    let embedder: Arc<dyn cerebrum_core::Embedder> = Arc::new(MockEmbedder::new());
     let orchestrator = MemoryOrchestrator::new("/tmp/test_orch_multi_promote", embedder)
         .await
         .unwrap();
@@ -450,8 +430,7 @@ async fn test_orchestrator_multiple_promotions() {
 
 #[tokio::test]
 async fn test_orchestrator_recall_limit() {
-    let embedder: Arc<dyn cerebrum_core::Embedder> =
-        Arc::new(MockEmbedder::new());
+    let embedder: Arc<dyn cerebrum_core::Embedder> = Arc::new(MockEmbedder::new());
     let orchestrator = MemoryOrchestrator::new("/tmp/test_orch_limit", embedder)
         .await
         .unwrap();
@@ -465,18 +444,14 @@ async fn test_orchestrator_recall_limit() {
     }
 
     // Recall with limit
-    let results = orchestrator
-        .recall("memory".to_string(), 5)
-        .await
-        .unwrap();
+    let results = orchestrator.recall("memory".to_string(), 5).await.unwrap();
 
     assert_eq!(results.len(), 5);
 }
 
 #[tokio::test]
 async fn test_orchestrator_cross_tier_recall() {
-    let embedder: Arc<dyn cerebrum_core::Embedder> =
-        Arc::new(MockEmbedder::new());
+    let embedder: Arc<dyn cerebrum_core::Embedder> = Arc::new(MockEmbedder::new());
     let orchestrator = MemoryOrchestrator::new("/tmp/test_orch_cross_tier", embedder)
         .await
         .unwrap();
@@ -495,16 +470,19 @@ async fn test_orchestrator_cross_tier_recall() {
     orchestrator.memorize(id2).await.unwrap();
 
     // Recall should find both
-    let results = orchestrator
-        .recall("memory".to_string(), 10)
-        .await
-        .unwrap();
+    let results = orchestrator.recall("memory".to_string(), 10).await.unwrap();
 
     assert_eq!(results.len(), 2);
 
     // Verify tier information is preserved
-    let synapse_tiers = results.iter().filter(|m| m.tier == MemoryTier::Synapse).count();
-    let cortex_tiers = results.iter().filter(|m| m.tier == MemoryTier::Cortex).count();
+    let synapse_tiers = results
+        .iter()
+        .filter(|m| m.tier == MemoryTier::Synapse)
+        .count();
+    let cortex_tiers = results
+        .iter()
+        .filter(|m| m.tier == MemoryTier::Cortex)
+        .count();
 
     assert_eq!(synapse_tiers, 1);
     assert_eq!(cortex_tiers, 1);
@@ -512,8 +490,7 @@ async fn test_orchestrator_cross_tier_recall() {
 
 #[tokio::test]
 async fn test_orchestrator_empty_recall() {
-    let embedder: Arc<dyn cerebrum_core::Embedder> =
-        Arc::new(MockEmbedder::new());
+    let embedder: Arc<dyn cerebrum_core::Embedder> = Arc::new(MockEmbedder::new());
     let orchestrator = MemoryOrchestrator::new("/tmp/test_orch_empty_recall", embedder)
         .await
         .unwrap();
@@ -528,8 +505,7 @@ async fn test_orchestrator_empty_recall() {
 
 #[tokio::test]
 async fn test_orchestrator_forget_nonexistent() {
-    let embedder: Arc<dyn cerebrum_core::Embedder> =
-        Arc::new(MockEmbedder::new());
+    let embedder: Arc<dyn cerebrum_core::Embedder> = Arc::new(MockEmbedder::new());
     let orchestrator = MemoryOrchestrator::new("/tmp/test_orch_forget_none", embedder)
         .await
         .unwrap();
@@ -543,8 +519,7 @@ async fn test_orchestrator_forget_nonexistent() {
 
 #[tokio::test]
 async fn test_orchestrator_session_isolation() {
-    let embedder: Arc<dyn cerebrum_core::Embedder> =
-        Arc::new(MockEmbedder::new());
+    let embedder: Arc<dyn cerebrum_core::Embedder> = Arc::new(MockEmbedder::new());
     let orchestrator = MemoryOrchestrator::new("/tmp/test_orch_isolation", embedder)
         .await
         .unwrap();

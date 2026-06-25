@@ -1,6 +1,6 @@
+use crate::embedder::Embedder;
 use crate::error::Result;
 use crate::models::{MemoryEntry, MemoryId};
-use crate::embedder::Embedder;
 use crate::traits::MemoryStore;
 use async_trait::async_trait;
 use parking_lot::RwLock;
@@ -106,7 +106,11 @@ impl MemoryStore for SynapseMemory {
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         // Return top N
-        Ok(scored.into_iter().take(limit).map(|(entry, _)| entry).collect())
+        Ok(scored
+            .into_iter()
+            .take(limit)
+            .map(|(entry, _)| entry)
+            .collect())
     }
 
     async fn delete(&self, id: &MemoryId) -> Result<()> {
