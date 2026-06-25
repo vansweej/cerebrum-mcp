@@ -14,3 +14,11 @@ anyhow = "1.0"
 
 [dev-dependencies]
 tokio-test = "0.4"
+
+[[bin]]
+name = "cerebrum"
+path = "src/main.rs"
+
+[profile.test]
+opt-level = 1
+

@@ -5,30 +5,35 @@ A two-tier agent memory subsystem implemented as a single Model Context Protocol
 ## Quick Start
 
 ```bash
-nix develop . --command just run
+nix develop . --command cargo run --bin cerebrum
 ```
 
 ## Development
 
+All commands should be run inside the Nix dev shell:
+
 ```bash
-# Format code
-nix develop . --command just fmt
+nix develop . --command cargo fmt
+nix develop . --command cargo clippy -- -D warnings
+nix develop . --command cargo test
+nix develop . --command cargo tarpaulin --out Html --output-dir coverage --timeout 300 --exclude-files tests/* --fail-under 90
+```
 
-# Run linter
-nix develop . --command just lint
+Or enter the dev shell once and run commands directly:
 
-# Run tests
-nix develop . --command just test
-
-# Check code coverage (must be ≥90%)
-nix develop . --command just coverage
+```bash
+nix develop
+cargo fmt
+cargo clippy -- -D warnings
+cargo test
+cargo tarpaulin --out Html --output-dir coverage --timeout 300 --exclude-files tests/* --fail-under 90
 ```
 
 ## Code Quality Requirements
 
-- **Coverage Gate:** All code must maintain ≥90% test coverage (enforced by `just coverage`)
+- **Coverage Gate:** All code must maintain ≥90% test coverage (enforced by `cargo tarpaulin --fail-under 90`)
 - **Formatting:** Code must be formatted with `cargo fmt`
-- **Linting:** All clippy warnings must be fixed (run `just lint`)
+- **Linting:** All clippy warnings must be fixed (run `cargo clippy -- -D warnings`)
 
 ## Architecture
 
