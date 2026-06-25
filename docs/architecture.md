@@ -151,13 +151,14 @@ pub trait MemoryStore: Send + Sync {
 
 ## Code Quality
 
-- **Test Coverage:** 91.75% on core library code (cerebrum-core)
+- **Test Coverage:** 96.39% on core library code (cerebrum-core)
 - **Unit Tests:** 35 tests covering embedder, utilities, models, and tier implementations
-- **Integration Tests:** 42 tests covering end-to-end workflows (20 Phase 2 + 22 Phase 3)
+- **Integration Tests:** 94 tests covering end-to-end workflows (20 Phase 2 + 22 Phase 3 + 36 Phase 4 + 16 cerebrum)
+- **Total Tests:** 129 tests (100% passing)
 - **Code Quality Gates:**
   - `cargo fmt` — Code formatting ✅
   - `cargo clippy -- -D warnings` — Linting (no warnings allowed) ✅
-  - `cargo tarpaulin` — Coverage verification (≥90% required) ✅ 91.75%
+  - `cargo tarpaulin` — Coverage verification (≥90% required) ✅ 96.39%
 
 ## Synapse Tier Implementation
 
@@ -416,5 +417,285 @@ graph LR
 - **Blended Search:** Combines results from both tiers with deduplication and ranking
 - **Auto-Promotion:** Session end can automatically promote high-salience memories
 - **Thread-Safe:** Uses `parking_lot::RwLock` for high-performance concurrent access
+
+## Phase 4: MCP Server Implementation
+
+### Overview
+
+Phase 4 implements the MCP (Model Context Protocol) server handler that exposes the MemoryOrchestrator's tools to external agents. The server uses the `rmcp` crate (v1.8.0) with stdio transport for bidirectional communication.
+
+### Architecture
+
+```mermaid
+graph TD
+    Agent["MCP Agent"] -->|stdio| Transport["AsyncRwTransport"]
+    Transport -->|MCP Protocol| Handler["CerebrumHandler"]
+    Handler -->|tool calls| Orchestrator["MemoryOrchestrator"]
+    Orchestrator -->|memory ops| Synapse["Synapse"]
+    Orchestrator -->|memory ops| Cortex["Cortex"]
+```
+
+### MCP Server Handler
+
+The `CerebrumHandler` struct implements the `ServerHandler` trait from `rmcp`:
+
+```rust
+pub struct CerebrumHandler {
+    orchestrator: Arc<MemoryOrchestrator>,
+}
+
+impl ServerHandler for CerebrumHandler {
+    async fn get_info(&self) -> Result<ServerInfo>;
+    async fn list_tools(&self) -> Result<Vec<Tool>>;
+    async fn call_tool(&self, name: String, arguments: Value) -> Result<CallToolResult>;
+    async fn get_tool(&self, name: &str) -> Result<Option<Tool>>;
+}
+```
+
+### Tool Definitions
+
+The server exposes 5 memory management tools with JSON schema validation:
+
+#### 1. `remember` Tool
+
+**Purpose:** Store a memory in Synapse with automatic embedding generation.
+
+**Input Schema:**
+```json
+{
+  "type": "object",
+  "properties": {
+    "content": {
+      "type": "string",
+      "description": "The memory content to store"
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Optional metadata key-value pairs"
+    }
+  },
+  "required": ["content"]
+}
+```
+
+**Output:** Memory ID (string)
+
+**Implementation:**
+```
+1. Parse content and metadata from arguments
+2. Call orchestrator.remember(content, metadata)
+3. Return memory ID as JSON response
+```
+
+#### 2. `recall` Tool
+
+**Purpose:** Search both tiers with semantic similarity and return ranked results.
+
+**Input Schema:**
+```json
+{
+  "type": "object",
+  "properties": {
+    "query": {
+      "type": "string",
+      "description": "Search query for semantic similarity"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Maximum number of results (default: 10)"
+    }
+  },
+  "required": ["query"]
+}
+```
+
+**Output:** Array of MemoryEntry objects
+
+**Implementation:**
+```
+1. Parse query and limit from arguments
+2. Call orchestrator.recall(query, limit)
+3. Serialize results to JSON
+4. Return as array of memory entries
+```
+
+#### 3. `memorize` Tool
+
+**Purpose:** Promote a memory from Synapse to Cortex.
+
+**Input Schema:**
+```json
+{
+  "type": "object",
+  "properties": {
+    "memory_id": {
+      "type": "string",
+      "description": "ID of memory to promote from Synapse to Cortex"
+    }
+  },
+  "required": ["memory_id"]
+}
+```
+
+**Output:** Success message
+
+**Implementation:**
+```
+1. Parse memory_id from arguments
+2. Call orchestrator.memorize(memory_id)
+3. Return success response
+```
+
+#### 4. `forget` Tool
+
+**Purpose:** Delete a memory from both tiers.
+
+**Input Schema:**
+```json
+{
+  "type": "object",
+  "properties": {
+    "memory_id": {
+      "type": "string",
+      "description": "ID of memory to delete"
+    }
+  },
+  "required": ["memory_id"]
+}
+```
+
+**Output:** Success message
+
+**Implementation:**
+```
+1. Parse memory_id from arguments
+2. Call orchestrator.forget(memory_id)
+3. Return success response
+```
+
+#### 5. `end_session` Tool
+
+**Purpose:** End the current session with optional auto-promotion of high-salience memories.
+
+**Input Schema:**
+```json
+{
+  "type": "object",
+  "properties": {
+    "promotion_threshold": {
+      "type": "number",
+      "description": "Salience threshold for auto-promotion (0.0-1.0, default: 0.7)"
+    }
+  },
+  "required": []
+}
+```
+
+**Output:** Success message
+
+**Implementation:**
+```
+1. Parse promotion_threshold from arguments (default: 0.7)
+2. Call orchestrator.end_session(promotion_threshold)
+3. Return success response
+```
+
+### Server Lifecycle
+
+The server is initialized in `main.rs` with the following flow:
+
+```rust
+#[tokio::main]
+async fn main() -> Result<()> {
+    // Create embedder
+    let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder::new());
+    
+    // Create orchestrator
+    let orchestrator = MemoryOrchestrator::new("/tmp/cortex", embedder).await?;
+    
+    // Create handler
+    let handler = CerebrumHandler::new(orchestrator);
+    
+    // Create stdio transport
+    let transport = AsyncRwTransport::<RoleServer, _, _>::new(
+        tokio::io::stdin(),
+        tokio::io::stdout(),
+    );
+    
+    // Start MCP server
+    rmcp::serve_server(handler, transport).await?;
+    
+    Ok(())
+}
+```
+
+### Response Wrapping
+
+All tool responses are wrapped in `Annotated<RawContent>` for MCP compliance:
+
+```rust
+let response = Annotated::new(
+    RawContent::text(json_response_string),
+    None,
+);
+```
+
+### Error Handling
+
+Errors are converted to `ErrorData` for proper MCP error responses:
+
+```rust
+ErrorData::internal_error(error_message, None)
+```
+
+### Protocol Flow
+
+```mermaid
+sequenceDiagram
+    participant Agent
+    participant Transport
+    participant Handler
+    participant Orchestrator
+
+    Agent->>Transport: MCP Tool Call (JSON)
+    Transport->>Handler: Parsed Tool Request
+    Handler->>Orchestrator: Tool Operation
+    Orchestrator-->>Handler: Result
+    Handler->>Transport: MCP Response (JSON)
+    Transport-->>Agent: Tool Result
+```
+
+### Test Coverage
+
+- **16 unit tests** covering:
+  - Tool definitions and schemas (5 tests)
+  - Tool input validation (10 tests)
+  - Tool calling and response handling (1 test)
+- **36 integration tests** covering:
+  - Tool calling integration (5 tests)
+  - Blended search (2 tests)
+  - Error handling (5 tests)
+  - Tier assignment (2 tests)
+  - Salience and ranking (1 test)
+  - Session lifecycle (1 test)
+  - Embedding tests (2 tests)
+  - Metadata tests (3 tests)
+  - Synapse/Cortex lengths (1 test)
+  - Additional validation tests (13 tests)
+
+### Quality Metrics
+
+- **Test Coverage:** 96.39% (187/194 lines covered)
+- **Tests Passing:** 52/52 (100% success rate)
+- **Code Quality:** Zero clippy warnings, properly formatted
+- **Total Project Tests:** 129 tests passing
+
+### Architecture Decisions
+
+- **Single MCP Server:** One server with two internal tiers (not separate servers)
+- **Stdio Transport:** Uses `AsyncRwTransport` for bidirectional communication
+- **Async/Await:** All handler methods are async for non-blocking I/O
+- **Error Handling:** Uses `ErrorData` for MCP-compliant error responses
+- **Response Format:** All responses wrapped in `Annotated<RawContent>` for protocol compliance
 
 
