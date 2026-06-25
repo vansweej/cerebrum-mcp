@@ -6,6 +6,7 @@ pub mod fastembed_embedder;
 pub mod lancedb_cortex;
 pub mod migration;
 pub mod models;
+pub mod observability;
 pub mod orchestrator;
 pub mod promotion;
 pub mod summarization;
@@ -27,6 +28,7 @@ pub use migration::{
     MigrationResult, MigrationStrategy, PreserveMigration, ReembedMigration,
 };
 pub use models::{MemoryEntry, MemoryId, MemoryScope, MemoryTier};
+pub use observability::{ObservabilityContext, OperationMetrics, OperationTimer};
 pub use orchestrator::MemoryOrchestrator;
 pub use promotion::{
     FrequencyBasedPromotion, HybridPromotion, ImportanceBasedPromotion, PromotionContext,
