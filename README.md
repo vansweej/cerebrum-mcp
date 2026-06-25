@@ -16,7 +16,7 @@ All commands should be run inside the Nix dev shell:
 nix develop . --command cargo fmt
 nix develop . --command cargo clippy -- -D warnings
 nix develop . --command cargo test
-nix develop . --command cargo tarpaulin --out Html --output-dir coverage
+nix develop . --command cargo tarpaulin
 ```
 
 Or enter the dev shell once and run commands directly:
@@ -26,7 +26,7 @@ nix develop
 cargo fmt
 cargo clippy -- -D warnings
 cargo test
-cargo tarpaulin --out Html --output-dir coverage
+cargo tarpaulin
 ```
 
 ## Code Quality Requirements
