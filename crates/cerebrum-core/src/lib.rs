@@ -1,4 +1,5 @@
 pub mod cortex;
+pub mod decay;
 pub mod embedder;
 pub mod error;
 pub mod models;
@@ -10,6 +11,7 @@ pub mod utils;
 
 // Re-export commonly used types
 pub use cortex::CortexMemory;
+pub use decay::{AccessBasedDecay, DecayContext, DecayStrategy, HybridDecay, RelevanceBasedDecay, TimeBasedDecay};
 pub use embedder::{Embedder, MockEmbedder};
 pub use error::{CerebrumError, Result};
 pub use models::{MemoryEntry, MemoryId, MemoryTier};
