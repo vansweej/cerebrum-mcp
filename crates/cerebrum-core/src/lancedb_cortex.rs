@@ -34,10 +34,9 @@ pub struct LanceDBMemoryRecord {
 impl LanceDBMemoryRecord {
     /// Convert from MemoryEntry to LanceDBMemoryRecord.
     pub fn from_entry(entry: &MemoryEntry) -> Result<Self> {
-        let embedding = entry
-            .embedding
-            .clone()
-            .ok_or_else(|| CerebrumError::Validation("Memory entry missing embedding".to_string()))?;
+        let embedding = entry.embedding.clone().ok_or_else(|| {
+            CerebrumError::Validation("Memory entry missing embedding".to_string())
+        })?;
 
         Ok(Self {
             id: entry.id.to_string(),
@@ -204,10 +203,7 @@ impl MemoryStore for LanceDBCortex {
             .collect();
 
         // Sort by score (descending)
-        scored.sort_by(|a, b| {
-            b.1.partial_cmp(&a.1)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         Ok(scored
             .into_iter()
@@ -242,10 +238,7 @@ impl MemoryStore for LanceDBCortex {
             .collect();
 
         // Sort by score (descending)
-        scored.sort_by(|a, b| {
-            b.1.partial_cmp(&a.1)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         Ok(scored
             .into_iter()
@@ -276,7 +269,9 @@ mod tests {
     #[tokio::test]
     async fn test_lancedb_cortex_store_and_retrieve() {
         let embedder = Arc::new(MockEmbedder::new());
-        let cortex = LanceDBCortex::new(":memory:", embedder.clone()).await.unwrap();
+        let cortex = LanceDBCortex::new(":memory:", embedder.clone())
+            .await
+            .unwrap();
 
         let entry = MemoryEntry::builder(MemoryId::new(), "test memory".to_string())
             .embedding(vec![0.1; 384])
@@ -292,7 +287,9 @@ mod tests {
     #[tokio::test]
     async fn test_lancedb_cortex_len() {
         let embedder = Arc::new(MockEmbedder::new());
-        let cortex = LanceDBCortex::new(":memory:", embedder.clone()).await.unwrap();
+        let cortex = LanceDBCortex::new(":memory:", embedder.clone())
+            .await
+            .unwrap();
 
         let entry = MemoryEntry::builder(MemoryId::new(), "test memory".to_string())
             .embedding(vec![0.1; 384])
@@ -308,7 +305,9 @@ mod tests {
     #[tokio::test]
     async fn test_lancedb_cortex_delete() {
         let embedder = Arc::new(MockEmbedder::new());
-        let cortex = LanceDBCortex::new(":memory:", embedder.clone()).await.unwrap();
+        let cortex = LanceDBCortex::new(":memory:", embedder.clone())
+            .await
+            .unwrap();
 
         let id = MemoryId::new();
         let entry = MemoryEntry::builder(id, "test memory".to_string())
@@ -326,7 +325,9 @@ mod tests {
     #[tokio::test]
     async fn test_lancedb_cortex_retrieve_by_scope() {
         let embedder = Arc::new(MockEmbedder::new());
-        let cortex = LanceDBCortex::new(":memory:", embedder.clone()).await.unwrap();
+        let cortex = LanceDBCortex::new(":memory:", embedder.clone())
+            .await
+            .unwrap();
 
         let entry = MemoryEntry::builder(MemoryId::new(), "test memory".to_string())
             .embedding(vec![0.1; 384])
@@ -346,7 +347,9 @@ mod tests {
     #[tokio::test]
     async fn test_lancedb_cortex_retrieve_by_scope_mismatch() {
         let embedder = Arc::new(MockEmbedder::new());
-        let cortex = LanceDBCortex::new(":memory:", embedder.clone()).await.unwrap();
+        let cortex = LanceDBCortex::new(":memory:", embedder.clone())
+            .await
+            .unwrap();
 
         let entry = MemoryEntry::builder(MemoryId::new(), "test memory".to_string())
             .embedding(vec![0.1; 384])
@@ -366,7 +369,9 @@ mod tests {
     #[tokio::test]
     async fn test_lancedb_cortex_retrieve_by_scope_global() {
         let embedder = Arc::new(MockEmbedder::new());
-        let cortex = LanceDBCortex::new(":memory:", embedder.clone()).await.unwrap();
+        let cortex = LanceDBCortex::new(":memory:", embedder.clone())
+            .await
+            .unwrap();
 
         let entry = MemoryEntry::builder(MemoryId::new(), "test memory".to_string())
             .embedding(vec![0.1; 384])
@@ -386,7 +391,9 @@ mod tests {
     #[tokio::test]
     async fn test_lancedb_cortex_is_empty() {
         let embedder = Arc::new(MockEmbedder::new());
-        let cortex = LanceDBCortex::new(":memory:", embedder.clone()).await.unwrap();
+        let cortex = LanceDBCortex::new(":memory:", embedder.clone())
+            .await
+            .unwrap();
 
         assert!(cortex.is_empty().await.unwrap());
     }
@@ -394,7 +401,9 @@ mod tests {
     #[tokio::test]
     async fn test_lancedb_cortex_list() {
         let embedder = Arc::new(MockEmbedder::new());
-        let cortex = LanceDBCortex::new(":memory:", embedder.clone()).await.unwrap();
+        let cortex = LanceDBCortex::new(":memory:", embedder.clone())
+            .await
+            .unwrap();
 
         let entry = MemoryEntry::builder(MemoryId::new(), "test memory".to_string())
             .embedding(vec![0.1; 384])
@@ -422,5 +431,179 @@ mod tests {
         assert_eq!(converted.id, entry.id);
         assert_eq!(converted.content, entry.content);
         assert_eq!(converted.salience, entry.salience);
+    }
+
+    #[test]
+    fn test_parse_scope_string_global() {
+        let result = parse_scope_string("global");
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap(), MemoryScope::Global));
+    }
+
+    #[test]
+    fn test_parse_scope_string_user() {
+        let result = parse_scope_string("user:alice");
+        assert!(result.is_ok());
+        match result.unwrap() {
+            MemoryScope::User(id) => assert_eq!(id, "alice"),
+            _ => panic!("Expected User scope"),
+        }
+    }
+
+    #[test]
+    fn test_parse_scope_string_agent() {
+        let result = parse_scope_string("agent:bot123");
+        assert!(result.is_ok());
+        match result.unwrap() {
+            MemoryScope::Agent(id) => assert_eq!(id, "bot123"),
+            _ => panic!("Expected Agent scope"),
+        }
+    }
+
+    #[test]
+    fn test_parse_scope_string_session() {
+        let result = parse_scope_string("session:sess456");
+        assert!(result.is_ok());
+        match result.unwrap() {
+            MemoryScope::Session(id) => assert_eq!(id, "sess456"),
+            _ => panic!("Expected Session scope"),
+        }
+    }
+
+    #[test]
+    fn test_parse_scope_string_invalid() {
+        let result = parse_scope_string("invalid:scope");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_cosine_similarity_identical_vectors() {
+        let a = vec![1.0, 0.0, 0.0];
+        let b = vec![1.0, 0.0, 0.0];
+        let similarity = LanceDBCortex::cosine_similarity(&a, &b);
+        assert!((similarity - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_cosine_similarity_orthogonal_vectors() {
+        let a = vec![1.0, 0.0, 0.0];
+        let b = vec![0.0, 1.0, 0.0];
+        let similarity = LanceDBCortex::cosine_similarity(&a, &b);
+        assert!(similarity.abs() < 0.001);
+    }
+
+    #[test]
+    fn test_cosine_similarity_opposite_vectors() {
+        let a = vec![1.0, 0.0, 0.0];
+        let b = vec![-1.0, 0.0, 0.0];
+        let similarity = LanceDBCortex::cosine_similarity(&a, &b);
+        assert!((similarity + 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_cosine_similarity_empty_vectors() {
+        let a: Vec<f32> = vec![];
+        let b: Vec<f32> = vec![];
+        let similarity = LanceDBCortex::cosine_similarity(&a, &b);
+        assert_eq!(similarity, 0.0);
+    }
+
+    #[test]
+    fn test_cosine_similarity_zero_magnitude() {
+        let a = vec![0.0, 0.0, 0.0];
+        let b = vec![1.0, 0.0, 0.0];
+        let similarity = LanceDBCortex::cosine_similarity(&a, &b);
+        assert_eq!(similarity, 0.0);
+    }
+
+    #[tokio::test]
+    async fn test_lancedb_cortex_search_by_salience() {
+        let embedder = Arc::new(MockEmbedder::new());
+        let cortex = LanceDBCortex::new(":memory:", embedder.clone())
+            .await
+            .unwrap();
+
+        // Store entries with different salience values
+        let entry1 = MemoryEntry::builder(MemoryId::new(), "high salience".to_string())
+            .embedding(vec![0.1; 384])
+            .tier(MemoryTier::Cortex)
+            .salience(0.9)
+            .build();
+
+        let entry2 = MemoryEntry::builder(MemoryId::new(), "low salience".to_string())
+            .embedding(vec![0.2; 384])
+            .tier(MemoryTier::Cortex)
+            .salience(0.1)
+            .build();
+
+        cortex.store(entry1).await.unwrap();
+        cortex.store(entry2).await.unwrap();
+
+        let results = cortex.search_by_salience(10).await.unwrap();
+        assert_eq!(results.len(), 2);
+        // First result should have higher salience
+        assert!(results[0].salience >= results[1].salience);
+    }
+
+    #[tokio::test]
+    async fn test_lancedb_cortex_search_by_salience_limit() {
+        let embedder = Arc::new(MockEmbedder::new());
+        let cortex = LanceDBCortex::new(":memory:", embedder.clone())
+            .await
+            .unwrap();
+
+        // Store multiple entries
+        for i in 0..5 {
+            let entry = MemoryEntry::builder(MemoryId::new(), format!("entry {}", i))
+                .embedding(vec![0.1; 384])
+                .tier(MemoryTier::Cortex)
+                .salience(i as f32 * 0.2)
+                .build();
+            cortex.store(entry).await.unwrap();
+        }
+
+        let results = cortex.search_by_salience(2).await.unwrap();
+        assert_eq!(results.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_lancedb_cortex_from_parts() {
+        let embedder = Arc::new(MockEmbedder::new());
+        let memories = Arc::new(RwLock::new(HashMap::new()));
+
+        let cortex = LanceDBCortex::from_parts(memories.clone(), embedder);
+        assert!(cortex.is_empty().await.unwrap());
+    }
+
+    #[test]
+    fn test_lancedb_memory_record_from_entry_missing_embedding() {
+        let entry = MemoryEntry::builder(MemoryId::new(), "test".to_string())
+            .tier(MemoryTier::Cortex)
+            .build();
+
+        let result = LanceDBMemoryRecord::from_entry(&entry);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_lancedb_memory_record_all_scopes() {
+        let scopes = vec![
+            MemoryScope::Global,
+            MemoryScope::User("user1".to_string()),
+            MemoryScope::Agent("agent1".to_string()),
+            MemoryScope::Session("session1".to_string()),
+        ];
+
+        for scope in scopes {
+            let entry = MemoryEntry::builder(MemoryId::new(), "test".to_string())
+                .embedding(vec![0.1; 384])
+                .tier(MemoryTier::Cortex)
+                .scope(scope.clone())
+                .build();
+
+            let record = LanceDBMemoryRecord::from_entry(&entry).unwrap();
+            let converted = record.to_entry().unwrap();
+            assert_eq!(converted.scope, scope);
+        }
     }
 }
