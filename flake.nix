@@ -24,6 +24,7 @@
             just
             pkg-config
             openssl
+            protobuf
           ];
 
           shellHook = ''
