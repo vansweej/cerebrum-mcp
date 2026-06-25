@@ -1,9 +1,10 @@
 [tarpaulin]
-engine = "Ptrace"
+engine = "Auto"
 workspace = true
 fail-under = 90
 exclude-files = [
     "*/tests/*",
     "*/build.rs",
     "*/examples/*",
+    "*/main.rs",
 ]
