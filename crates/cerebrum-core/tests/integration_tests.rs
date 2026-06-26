@@ -244,10 +244,9 @@ async fn test_integration_memory_scope_filtering() {
     // Test that memory scope filtering works correctly
     let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder::new());
     let dir = tempfile::tempdir().unwrap();
-    let orchestrator =
-        MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
-            .await
-            .expect("Failed to create orchestrator");
+    let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+        .await
+        .expect("Failed to create orchestrator");
 
     // Store memory
     let _id = orchestrator
@@ -307,10 +306,9 @@ async fn test_integration_memory_decay() {
     // Test memory decay over time
     let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder::new());
     let dir = tempfile::tempdir().unwrap();
-    let orchestrator =
-        MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
-            .await
-            .expect("Failed to create orchestrator");
+    let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+        .await
+        .expect("Failed to create orchestrator");
 
     let _id = orchestrator
         .remember("Decaying memory".to_string(), HashMap::new())
@@ -342,10 +340,9 @@ async fn test_integration_blended_search_across_tiers() {
     // Test blended search across Synapse and Cortex tiers
     let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder::new());
     let dir = tempfile::tempdir().unwrap();
-    let orchestrator =
-        MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
-            .await
-            .expect("Failed to create orchestrator");
+    let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+        .await
+        .expect("Failed to create orchestrator");
 
     // Store in Synapse
     let _id1 = orchestrator
@@ -378,10 +375,9 @@ async fn test_integration_metadata_preservation() {
     // Test that metadata is preserved through operations
     let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder::new());
     let dir = tempfile::tempdir().unwrap();
-    let orchestrator =
-        MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
-            .await
-            .expect("Failed to create orchestrator");
+    let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+        .await
+        .expect("Failed to create orchestrator");
 
     let mut metadata = HashMap::new();
     metadata.insert("source".to_string(), "test".to_string());
@@ -522,14 +518,9 @@ async fn test_integration_orchestrator_accessors() {
     // Test orchestrator accessor methods
     let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder::new());
     let dir = tempfile::tempdir().unwrap();
-    let orchestrator = MemoryOrchestrator::new(
-        dir.path(),
-        "memories",
-        384,
-        embedder.clone(),
-    )
-    .await
-    .expect("Failed to create orchestrator");
+    let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder.clone())
+        .await
+        .expect("Failed to create orchestrator");
 
     // Test embedder accessor
     let _retrieved_embedder = orchestrator.embedder();
@@ -548,10 +539,9 @@ async fn test_integration_memory_promotion_with_salience() {
     // Test memory promotion based on salience
     let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder::new());
     let dir = tempfile::tempdir().unwrap();
-    let orchestrator =
-        MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
-            .await
-            .expect("Failed to create orchestrator");
+    let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+        .await
+        .expect("Failed to create orchestrator");
 
     let id = orchestrator
         .remember("High salience memory".to_string(), HashMap::new())

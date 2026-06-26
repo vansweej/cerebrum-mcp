@@ -765,7 +765,12 @@ mod tests {
         let orchestrator = Arc::new(
             tokio::runtime::Runtime::new()
                 .unwrap()
-                .block_on(MemoryOrchestrator::new(dir.path(), "memories", 384, embedder))
+                .block_on(MemoryOrchestrator::new(
+                    dir.path(),
+                    "memories",
+                    384,
+                    embedder,
+                ))
                 .expect("Failed to create orchestrator"),
         );
         let handler = CerebrumHandler::new(orchestrator);

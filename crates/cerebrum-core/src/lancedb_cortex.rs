@@ -34,18 +34,18 @@ fn sql_quote(value: &str) -> String {
 fn schema(dim: usize) -> Arc<Schema> {
     let vector_field = Field::new("item", DataType::Float32, true);
     let fields = vec![
-        Field::new("id",                DataType::Utf8, false),
-        Field::new("content",           DataType::Utf8, false),
-        Field::new("salience",          DataType::Float32, false),
-        Field::new("timestamp",         DataType::Utf8, false),
-        Field::new("source_session_id", DataType::Utf8, true),   // nullable
-        Field::new("scope",             DataType::Utf8, false),
+        Field::new("id", DataType::Utf8, false),
+        Field::new("content", DataType::Utf8, false),
+        Field::new("salience", DataType::Float32, false),
+        Field::new("timestamp", DataType::Utf8, false),
+        Field::new("source_session_id", DataType::Utf8, true), // nullable
+        Field::new("scope", DataType::Utf8, false),
         Field::new(
             "embedding",
             DataType::FixedSizeList(Arc::new(vector_field), dim as i32),
             false,
         ),
-        Field::new("metadata_json",     DataType::Utf8, false),
+        Field::new("metadata_json", DataType::Utf8, false),
     ];
     Arc::new(Schema::new(Fields::from(fields)))
 }
@@ -182,9 +182,9 @@ impl LanceDBCortex {
             )));
         }
 
-        let path = db_path.to_str().ok_or_else(|| {
-            CerebrumError::Database("non-UTF-8 db_path".to_string())
-        })?;
+        let path = db_path
+            .to_str()
+            .ok_or_else(|| CerebrumError::Database("non-UTF-8 db_path".to_string()))?;
 
         let conn = lancedb::connect(path)
             .execute()
@@ -242,14 +242,14 @@ impl LanceDBCortex {
     fn record_to_batch(record: &LanceDBMemoryRecord, dim: usize) -> Result<RecordBatch> {
         let schema = schema(dim);
 
-        let mut id_b           = StringBuilder::new();
-        let mut content_b      = StringBuilder::new();
-        let mut salience_b     = arrow_array::builder::Float32Builder::new();
-        let mut timestamp_b    = StringBuilder::new();
-        let mut session_b      = StringBuilder::new();
-        let mut scope_b        = StringBuilder::new();
-        let mut embedding_b    = FixedSizeListBuilder::new(Float32Builder::new(), dim as i32);
-        let mut metadata_b     = StringBuilder::new();
+        let mut id_b = StringBuilder::new();
+        let mut content_b = StringBuilder::new();
+        let mut salience_b = arrow_array::builder::Float32Builder::new();
+        let mut timestamp_b = StringBuilder::new();
+        let mut session_b = StringBuilder::new();
+        let mut scope_b = StringBuilder::new();
+        let mut embedding_b = FixedSizeListBuilder::new(Float32Builder::new(), dim as i32);
+        let mut metadata_b = StringBuilder::new();
 
         id_b.append_value(&record.id);
         content_b.append_value(&record.content);
@@ -257,7 +257,7 @@ impl LanceDBCortex {
         timestamp_b.append_value(&record.timestamp);
         match &record.source_session_id {
             Some(s) => session_b.append_value(s),
-            None    => session_b.append_null(),
+            None => session_b.append_null(),
         }
         scope_b.append_value(&record.scope);
         for &v in &record.embedding {
@@ -269,14 +269,14 @@ impl LanceDBCortex {
         let batch = RecordBatch::try_new(
             schema,
             vec![
-                Arc::new(id_b.finish())        as ArrayRef,
-                Arc::new(content_b.finish())   as ArrayRef,
-                Arc::new(salience_b.finish())  as ArrayRef,
+                Arc::new(id_b.finish()) as ArrayRef,
+                Arc::new(content_b.finish()) as ArrayRef,
+                Arc::new(salience_b.finish()) as ArrayRef,
                 Arc::new(timestamp_b.finish()) as ArrayRef,
-                Arc::new(session_b.finish())   as ArrayRef,
-                Arc::new(scope_b.finish())     as ArrayRef,
+                Arc::new(session_b.finish()) as ArrayRef,
+                Arc::new(scope_b.finish()) as ArrayRef,
                 Arc::new(embedding_b.finish()) as ArrayRef,
-                Arc::new(metadata_b.finish())  as ArrayRef,
+                Arc::new(metadata_b.finish()) as ArrayRef,
             ],
         )
         .map_err(|e| CerebrumError::Database(format!("Failed to build RecordBatch: {}", e)))?;
@@ -291,14 +291,38 @@ impl LanceDBCortex {
             return Ok(vec![]);
         }
 
-        let id_col       = batch.column_by_name("id").ok_or_else(|| CerebrumError::Database("missing 'id' column".into()))?.as_string::<i32>();
-        let content_col  = batch.column_by_name("content").ok_or_else(|| CerebrumError::Database("missing 'content' column".into()))?.as_string::<i32>();
-        let salience_col = batch.column_by_name("salience").ok_or_else(|| CerebrumError::Database("missing 'salience' column".into()))?.as_primitive::<Float32Type>();
-        let ts_col       = batch.column_by_name("timestamp").ok_or_else(|| CerebrumError::Database("missing 'timestamp' column".into()))?.as_string::<i32>();
-        let session_col  = batch.column_by_name("source_session_id").ok_or_else(|| CerebrumError::Database("missing 'source_session_id' column".into()))?.as_string::<i32>();
-        let scope_col    = batch.column_by_name("scope").ok_or_else(|| CerebrumError::Database("missing 'scope' column".into()))?.as_string::<i32>();
-        let emb_col      = batch.column_by_name("embedding").ok_or_else(|| CerebrumError::Database("missing 'embedding' column".into()))?.as_fixed_size_list();
-        let meta_col     = batch.column_by_name("metadata_json").ok_or_else(|| CerebrumError::Database("missing 'metadata_json' column".into()))?.as_string::<i32>();
+        let id_col = batch
+            .column_by_name("id")
+            .ok_or_else(|| CerebrumError::Database("missing 'id' column".into()))?
+            .as_string::<i32>();
+        let content_col = batch
+            .column_by_name("content")
+            .ok_or_else(|| CerebrumError::Database("missing 'content' column".into()))?
+            .as_string::<i32>();
+        let salience_col = batch
+            .column_by_name("salience")
+            .ok_or_else(|| CerebrumError::Database("missing 'salience' column".into()))?
+            .as_primitive::<Float32Type>();
+        let ts_col = batch
+            .column_by_name("timestamp")
+            .ok_or_else(|| CerebrumError::Database("missing 'timestamp' column".into()))?
+            .as_string::<i32>();
+        let session_col = batch
+            .column_by_name("source_session_id")
+            .ok_or_else(|| CerebrumError::Database("missing 'source_session_id' column".into()))?
+            .as_string::<i32>();
+        let scope_col = batch
+            .column_by_name("scope")
+            .ok_or_else(|| CerebrumError::Database("missing 'scope' column".into()))?
+            .as_string::<i32>();
+        let emb_col = batch
+            .column_by_name("embedding")
+            .ok_or_else(|| CerebrumError::Database("missing 'embedding' column".into()))?
+            .as_fixed_size_list();
+        let meta_col = batch
+            .column_by_name("metadata_json")
+            .ok_or_else(|| CerebrumError::Database("missing 'metadata_json' column".into()))?
+            .as_string::<i32>();
 
         let mut records = Vec::with_capacity(n);
         for i in 0..n {
@@ -307,14 +331,18 @@ impl LanceDBCortex {
             let embedding: Vec<f32> = (0..emb_f32.len()).map(|j| emb_f32.value(j)).collect();
 
             records.push(LanceDBMemoryRecord {
-                id:                id_col.value(i).to_string(),
-                content:           content_col.value(i).to_string(),
-                salience:          salience_col.value(i),
-                timestamp:         ts_col.value(i).to_string(),
-                source_session_id: if session_col.is_null(i) { None } else { Some(session_col.value(i).to_string()) },
-                scope:             scope_col.value(i).to_string(),
+                id: id_col.value(i).to_string(),
+                content: content_col.value(i).to_string(),
+                salience: salience_col.value(i),
+                timestamp: ts_col.value(i).to_string(),
+                source_session_id: if session_col.is_null(i) {
+                    None
+                } else {
+                    Some(session_col.value(i).to_string())
+                },
+                scope: scope_col.value(i).to_string(),
                 embedding,
-                metadata_json:     meta_col.value(i).to_string(),
+                metadata_json: meta_col.value(i).to_string(),
             });
         }
         Ok(records)
@@ -323,27 +351,36 @@ impl LanceDBCortex {
     /// Search memories by salience (highest first).
     pub async fn search_by_salience(&self, limit: usize) -> Result<Vec<MemoryEntry>> {
         let table = self.table().await?;
-        let row_count = table.count_rows(None).await
+        let row_count = table
+            .count_rows(None)
+            .await
             .map_err(|e| CerebrumError::Database(e.to_string()))?;
         if row_count == 0 {
             return Ok(vec![]);
         }
 
-        let stream = table.query().execute().await
+        let stream = table
+            .query()
+            .execute()
+            .await
             .map_err(|e| CerebrumError::Database(e.to_string()))?;
-        let batches: Vec<RecordBatch> = stream.try_collect().await
+        let batches: Vec<RecordBatch> = stream
+            .try_collect()
+            .await
             .map_err(|e| CerebrumError::Database(e.to_string()))?;
 
-        let mut records: Vec<LanceDBMemoryRecord> = batches.iter()
+        let mut records: Vec<LanceDBMemoryRecord> = batches
+            .iter()
             .flat_map(|b| Self::batch_to_records(b).unwrap_or_default())
             .collect();
 
-        records.sort_by(|a, b| b.salience.partial_cmp(&a.salience).unwrap_or(std::cmp::Ordering::Equal));
+        records.sort_by(|a, b| {
+            b.salience
+                .partial_cmp(&a.salience)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
-        records.iter()
-            .take(limit)
-            .map(|r| r.to_entry())
-            .collect()
+        records.iter().take(limit).map(|r| r.to_entry()).collect()
     }
 }
 
@@ -356,16 +393,14 @@ impl MemoryStore for LanceDBCortex {
     async fn store(&self, entry: MemoryEntry) -> Result<()> {
         let record = LanceDBMemoryRecord::from_entry(&entry)?;
         let schema = schema(self.embedding_dim);
-        let batch  = Self::record_to_batch(&record, self.embedding_dim)?;
+        let batch = Self::record_to_batch(&record, self.embedding_dim)?;
 
-        let reader = RecordBatchIterator::new(
-            vec![Ok(batch)],
-            schema,
-        );
+        let reader = RecordBatchIterator::new(vec![Ok(batch)], schema);
 
         let table = self.table().await?;
         let mut mi = table.merge_insert(&["id"]);
-        mi.when_matched_update_all(None).when_not_matched_insert_all();
+        mi.when_matched_update_all(None)
+            .when_not_matched_insert_all();
         mi.execute(Box::new(reader))
             .await
             .map_err(|e| CerebrumError::Database(format!("merge_insert failed: {}", e)))?;
@@ -381,21 +416,29 @@ impl MemoryStore for LanceDBCortex {
         let query_embedding = self.embedder.embed(query).await?;
 
         let table = self.table().await?;
-        let row_count = table.count_rows(None).await
+        let row_count = table
+            .count_rows(None)
+            .await
             .map_err(|e| CerebrumError::Database(e.to_string()))?;
         if row_count == 0 {
             return Ok(vec![]);
         }
 
-        let stream = table.query().execute().await
+        let stream = table
+            .query()
+            .execute()
+            .await
             .map_err(|e| CerebrumError::Database(e.to_string()))?;
-        let batches: Vec<RecordBatch> = stream.try_collect().await
+        let batches: Vec<RecordBatch> = stream
+            .try_collect()
+            .await
             .map_err(|e| CerebrumError::Database(e.to_string()))?;
 
-        let mut scored: Vec<(LanceDBMemoryRecord, f32)> = batches.iter()
+        let mut scored: Vec<(LanceDBMemoryRecord, f32)> = batches
+            .iter()
             .flat_map(|b| Self::batch_to_records(b).unwrap_or_default())
             .map(|record| {
-                let sim   = Self::cosine_similarity(&query_embedding, &record.embedding);
+                let sim = Self::cosine_similarity(&query_embedding, &record.embedding);
                 let score = sim * 0.7 + record.salience * 0.3;
                 (record, score)
             })
@@ -403,7 +446,8 @@ impl MemoryStore for LanceDBCortex {
 
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-        scored.into_iter()
+        scored
+            .into_iter()
             .take(limit)
             .map(|(r, _)| r.to_entry())
             .collect()
@@ -423,7 +467,9 @@ impl MemoryStore for LanceDBCortex {
         let query_embedding = self.embedder.embed(query).await?;
 
         let table = self.table().await?;
-        let row_count = table.count_rows(None).await
+        let row_count = table
+            .count_rows(None)
+            .await
             .map_err(|e| CerebrumError::Database(e.to_string()))?;
         if row_count == 0 {
             return Ok(vec![]);
@@ -433,23 +479,31 @@ impl MemoryStore for LanceDBCortex {
         let stream = match scope {
             MemoryScope::Global => {
                 // Global scope matches everything — no filter needed.
-                table.query().execute().await
+                table
+                    .query()
+                    .execute()
+                    .await
                     .map_err(|e| CerebrumError::Database(e.to_string()))?
             }
             _ => {
-                let predicate = format!(
-                    "scope = 'global' OR scope = {}",
-                    sql_quote(&scope.as_str())
-                );
-                table.query().only_if(predicate).execute().await
+                let predicate =
+                    format!("scope = 'global' OR scope = {}", sql_quote(&scope.as_str()));
+                table
+                    .query()
+                    .only_if(predicate)
+                    .execute()
+                    .await
                     .map_err(|e| CerebrumError::Database(e.to_string()))?
             }
         };
 
-        let batches: Vec<RecordBatch> = stream.try_collect().await
+        let batches: Vec<RecordBatch> = stream
+            .try_collect()
+            .await
             .map_err(|e| CerebrumError::Database(e.to_string()))?;
 
-        let mut scored: Vec<(LanceDBMemoryRecord, f32)> = batches.iter()
+        let mut scored: Vec<(LanceDBMemoryRecord, f32)> = batches
+            .iter()
             .flat_map(|b| Self::batch_to_records(b).unwrap_or_default())
             .filter_map(|record| {
                 // Precise scope match in Rust (handles bidirectional Global logic).
@@ -457,7 +511,7 @@ impl MemoryStore for LanceDBCortex {
                 if !scope.matches(&entry.scope) {
                     return None;
                 }
-                let sim   = Self::cosine_similarity(&query_embedding, &record.embedding);
+                let sim = Self::cosine_similarity(&query_embedding, &record.embedding);
                 let score = sim * 0.7 + record.salience * 0.3;
                 Some((record, score))
             })
@@ -465,7 +519,8 @@ impl MemoryStore for LanceDBCortex {
 
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-        scored.into_iter()
+        scored
+            .into_iter()
             .take(limit)
             .map(|(r, _)| r.to_entry())
             .collect()
@@ -474,7 +529,8 @@ impl MemoryStore for LanceDBCortex {
     /// Delete a memory by ID.
     async fn delete(&self, id: &MemoryId) -> Result<()> {
         let predicate = format!("id = {}", sql_quote(&id.to_string()));
-        self.table().await?
+        self.table()
+            .await?
             .delete(&predicate)
             .await
             .map_err(|e| CerebrumError::Database(format!("delete failed: {}", e)))?;
@@ -486,18 +542,26 @@ impl MemoryStore for LanceDBCortex {
     /// Explicit override — the trait default would embed the literal `"*"` string.
     async fn list(&self) -> Result<Vec<MemoryEntry>> {
         let table = self.table().await?;
-        let row_count = table.count_rows(None).await
+        let row_count = table
+            .count_rows(None)
+            .await
             .map_err(|e| CerebrumError::Database(e.to_string()))?;
         if row_count == 0 {
             return Ok(vec![]);
         }
 
-        let stream = table.query().execute().await
+        let stream = table
+            .query()
+            .execute()
+            .await
             .map_err(|e| CerebrumError::Database(e.to_string()))?;
-        let batches: Vec<RecordBatch> = stream.try_collect().await
+        let batches: Vec<RecordBatch> = stream
+            .try_collect()
+            .await
             .map_err(|e| CerebrumError::Database(e.to_string()))?;
 
-        batches.iter()
+        batches
+            .iter()
             .flat_map(|b| Self::batch_to_records(b).unwrap_or_default())
             .map(|r| r.to_entry())
             .collect()
@@ -507,7 +571,8 @@ impl MemoryStore for LanceDBCortex {
     ///
     /// Explicit override — the trait default would call list() which embeds `"*"`.
     async fn len(&self) -> Result<usize> {
-        self.table().await?
+        self.table()
+            .await?
             .count_rows(None)
             .await
             .map_err(|e| CerebrumError::Database(e.to_string()))
@@ -727,9 +792,12 @@ mod tests {
     async fn test_cortex_dimension_mismatch_returns_error() {
         let dir = tempfile::tempdir().unwrap();
         let embedder = Arc::new(MockEmbedder::new()); // reports dimension 384
-        // Request dim=768 — must be rejected before any LanceDB call.
+                                                      // Request dim=768 — must be rejected before any LanceDB call.
         let result = LanceDBCortex::new(dir.path(), "memories", 768, embedder).await;
-        assert!(result.is_err(), "mismatched dimension must error at construction");
+        assert!(
+            result.is_err(),
+            "mismatched dimension must error at construction"
+        );
     }
 
     #[tokio::test]
@@ -755,19 +823,25 @@ mod tests {
             .unwrap();
         let id = MemoryId::new();
 
-        cortex.store(
-            MemoryEntry::builder(id, "version 1".to_string())
-                .embedding(vec![0.1; 384])
-                .tier(MemoryTier::Cortex)
-                .build(),
-        ).await.unwrap();
+        cortex
+            .store(
+                MemoryEntry::builder(id, "version 1".to_string())
+                    .embedding(vec![0.1; 384])
+                    .tier(MemoryTier::Cortex)
+                    .build(),
+            )
+            .await
+            .unwrap();
 
-        cortex.store(
-            MemoryEntry::builder(id, "version 2".to_string())
-                .embedding(vec![0.2; 384])
-                .tier(MemoryTier::Cortex)
-                .build(),
-        ).await.unwrap();
+        cortex
+            .store(
+                MemoryEntry::builder(id, "version 2".to_string())
+                    .embedding(vec![0.2; 384])
+                    .tier(MemoryTier::Cortex)
+                    .build(),
+            )
+            .await
+            .unwrap();
 
         let entries = cortex.list().await.unwrap();
         assert_eq!(entries.len(), 1, "upsert must not duplicate rows");
@@ -787,7 +861,10 @@ mod tests {
         // These must succeed without embedding anything.
         let _ = cortex.list().await.expect("list() must not call embed()");
         let _ = cortex.len().await.expect("len() must not call embed()");
-        let _ = cortex.is_empty().await.expect("is_empty() must not call embed()");
+        let _ = cortex
+            .is_empty()
+            .await
+            .expect("is_empty() must not call embed()");
     }
 
     #[tokio::test]

@@ -18,8 +18,13 @@ async fn main() -> anyhow::Result<()> {
     // Initialize memory orchestrator with Config
     let config = cerebrum_core::Config::default();
     let orchestrator = Arc::new(
-        MemoryOrchestrator::new(&config.db_path, &config.table_name, config.embedding_dim, embedder)
-            .await?,
+        MemoryOrchestrator::new(
+            &config.db_path,
+            &config.table_name,
+            config.embedding_dim,
+            embedder,
+        )
+        .await?,
     );
     let handler = CerebrumHandler::new(orchestrator);
 
