@@ -6,13 +6,13 @@ use arrow_array::{
     builder::{FixedSizeListBuilder, Float32Builder, StringBuilder},
     cast::AsArray,
     types::Float32Type,
-    RecordBatch, RecordBatchIterator,
+    Array, RecordBatch, RecordBatchIterator,
 };
 use arrow_schema::{DataType, Field, Fields, Schema};
 use async_trait::async_trait;
 use futures::TryStreamExt;
 use lancedb::query::{ExecutableQuery, QueryBase};
-use lancedb::{Connection, DistanceType, Table};
+use lancedb::{Connection, Table};
 use serde::{Deserialize, Serialize};
 
 use crate::embedder::Embedder;

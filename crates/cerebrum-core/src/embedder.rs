@@ -1,6 +1,8 @@
 use crate::error::{CerebrumError, Result};
-use crate::traits::Embedder;
 use async_trait::async_trait;
+
+// Re-export the Embedder trait from traits module
+pub use crate::traits::Embedder;
 
 /// Mock embedder for development and testing.
 ///

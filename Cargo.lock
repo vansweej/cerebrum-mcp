@@ -607,6 +607,7 @@ dependencies = [
  "rmcp",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tokio-test",
  "tracing",
