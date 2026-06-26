@@ -19,9 +19,9 @@ use std::time::Duration;
 async fn test_integration_lancedb_persistence() {
     // Test that LanceDB can store and retrieve data
     let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder::new());
-    let db_path = "/tmp/test_integration_persistence";
+    let dir = tempfile::tempdir().unwrap();
 
-    let orchestrator = MemoryOrchestrator::with_lancedb_cortex(db_path, embedder.clone())
+    let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder.clone())
         .await
         .expect("Failed to create orchestrator");
 
@@ -65,9 +65,9 @@ async fn test_integration_embedder_consistency() {
 async fn test_integration_migration_workflow() {
     // Test complete migration workflow
     let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder::new());
-    let db_path = "/tmp/test_integration_migration";
+    let dir = tempfile::tempdir().unwrap();
 
-    let orchestrator = MemoryOrchestrator::with_lancedb_cortex(db_path, embedder.clone())
+    let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder.clone())
         .await
         .expect("Failed to create orchestrator");
 
@@ -156,9 +156,9 @@ async fn test_integration_observability_context() {
 async fn test_integration_end_to_end_workflow() {
     // Complete end-to-end workflow with all Phase 6 features
     let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder::new());
-    let db_path = "/tmp/test_integration_e2e";
+    let dir = tempfile::tempdir().unwrap();
 
-    let orchestrator = MemoryOrchestrator::with_lancedb_cortex(db_path, embedder.clone())
+    let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder.clone())
         .await
         .expect("Failed to create orchestrator");
 
@@ -210,7 +210,8 @@ async fn test_integration_end_to_end_workflow() {
 async fn test_integration_lancedb_cortex_store_and_retrieve() {
     // Test LanceDB Cortex store and retrieve functionality
     let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder::new());
-    let cortex = LanceDBCortex::new("/tmp/test_integration_cortex", embedder.clone())
+    let dir = tempfile::tempdir().unwrap();
+    let cortex = LanceDBCortex::new(dir.path(), "memories", 384, embedder.clone())
         .await
         .expect("Failed to create LanceDB Cortex");
 
@@ -218,7 +219,7 @@ async fn test_integration_lancedb_cortex_store_and_retrieve() {
     let entry = MemoryEntry {
         id: MemoryId::new(),
         content: "Test memory content".to_string(),
-        embedding: Some(vec![0.1, 0.2, 0.3]),
+        embedding: Some(vec![0.1; 384]),
         scope: MemoryScope::Global,
         salience: 0.8,
         timestamp: Utc::now(),
@@ -242,8 +243,9 @@ async fn test_integration_lancedb_cortex_store_and_retrieve() {
 async fn test_integration_memory_scope_filtering() {
     // Test that memory scope filtering works correctly
     let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder::new());
+    let dir = tempfile::tempdir().unwrap();
     let orchestrator =
-        MemoryOrchestrator::with_lancedb_cortex("/tmp/test_integration_scope", embedder)
+        MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
             .await
             .expect("Failed to create orchestrator");
 
@@ -266,8 +268,9 @@ async fn test_integration_memory_scope_filtering() {
 async fn test_integration_concurrent_operations() {
     // Test concurrent memory operations
     let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder::new());
+    let dir = tempfile::tempdir().unwrap();
     let orchestrator = Arc::new(
-        MemoryOrchestrator::with_lancedb_cortex("/tmp/test_integration_concurrent", embedder)
+        MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
             .await
             .expect("Failed to create orchestrator"),
     );
@@ -303,8 +306,9 @@ async fn test_integration_concurrent_operations() {
 async fn test_integration_memory_decay() {
     // Test memory decay over time
     let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder::new());
+    let dir = tempfile::tempdir().unwrap();
     let orchestrator =
-        MemoryOrchestrator::with_lancedb_cortex("/tmp/test_integration_decay", embedder)
+        MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
             .await
             .expect("Failed to create orchestrator");
 
@@ -337,8 +341,9 @@ async fn test_integration_memory_decay() {
 async fn test_integration_blended_search_across_tiers() {
     // Test blended search across Synapse and Cortex tiers
     let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder::new());
+    let dir = tempfile::tempdir().unwrap();
     let orchestrator =
-        MemoryOrchestrator::with_lancedb_cortex("/tmp/test_integration_blended", embedder)
+        MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
             .await
             .expect("Failed to create orchestrator");
 
@@ -372,8 +377,9 @@ async fn test_integration_blended_search_across_tiers() {
 async fn test_integration_metadata_preservation() {
     // Test that metadata is preserved through operations
     let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder::new());
+    let dir = tempfile::tempdir().unwrap();
     let orchestrator =
-        MemoryOrchestrator::with_lancedb_cortex("/tmp/test_integration_metadata", embedder)
+        MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
             .await
             .expect("Failed to create orchestrator");
 
@@ -442,7 +448,8 @@ async fn test_integration_retry_config_max_backoff() {
 async fn test_integration_lancedb_list_all_memories() {
     // Test listing all memories from LanceDB
     let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder::new());
-    let cortex = LanceDBCortex::new("/tmp/test_integration_list", embedder.clone())
+    let dir = tempfile::tempdir().unwrap();
+    let cortex = LanceDBCortex::new(dir.path(), "memories", 384, embedder.clone())
         .await
         .expect("Failed to create LanceDB Cortex");
 
@@ -451,7 +458,7 @@ async fn test_integration_lancedb_list_all_memories() {
         let entry = MemoryEntry {
             id: MemoryId::new(),
             content: format!("Memory {}", i),
-            embedding: Some(vec![0.1 * i as f32, 0.2, 0.3]),
+            embedding: Some(vec![0.1 + (i as f32 * 0.01); 384]),
             scope: MemoryScope::Global,
             salience: 0.8,
             timestamp: Utc::now(),
@@ -472,11 +479,12 @@ async fn test_integration_lancedb_list_all_memories() {
 async fn test_integration_migration_preserve_strategy() {
     // Test migration with preserve strategy
     let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder::new());
+    let dir = tempfile::tempdir().unwrap();
     let config =
         MigrationConfig::new(MigrationStrategy::Preserve, embedder.clone()).with_batch_size(10);
 
     let manager = MigrationManager::new();
-    let cortex = LanceDBCortex::new("/tmp/test_integration_preserve", embedder.clone())
+    let cortex = LanceDBCortex::new(dir.path(), "memories", 384, embedder.clone())
         .await
         .expect("Failed to create cortex");
 
@@ -492,11 +500,12 @@ async fn test_integration_migration_preserve_strategy() {
 async fn test_integration_migration_reembed_strategy() {
     // Test migration with reembed strategy
     let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder::new());
+    let dir = tempfile::tempdir().unwrap();
     let config =
         MigrationConfig::new(MigrationStrategy::Reembed, embedder.clone()).with_batch_size(10);
 
     let manager = MigrationManager::new();
-    let cortex = LanceDBCortex::new("/tmp/test_integration_reembed", embedder.clone())
+    let cortex = LanceDBCortex::new(dir.path(), "memories", 384, embedder.clone())
         .await
         .expect("Failed to create cortex");
 
@@ -512,8 +521,11 @@ async fn test_integration_migration_reembed_strategy() {
 async fn test_integration_orchestrator_accessors() {
     // Test orchestrator accessor methods
     let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder::new());
-    let orchestrator = MemoryOrchestrator::with_lancedb_cortex(
-        "/tmp/test_integration_accessors",
+    let dir = tempfile::tempdir().unwrap();
+    let orchestrator = MemoryOrchestrator::new(
+        dir.path(),
+        "memories",
+        384,
         embedder.clone(),
     )
     .await
@@ -535,8 +547,9 @@ async fn test_integration_orchestrator_accessors() {
 async fn test_integration_memory_promotion_with_salience() {
     // Test memory promotion based on salience
     let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder::new());
+    let dir = tempfile::tempdir().unwrap();
     let orchestrator =
-        MemoryOrchestrator::with_lancedb_cortex("/tmp/test_integration_promotion", embedder)
+        MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
             .await
             .expect("Failed to create orchestrator");
 

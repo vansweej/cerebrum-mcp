@@ -16,12 +16,14 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// Helper to create a test orchestrator
-async fn create_test_orchestrator() -> MemoryOrchestrator {
+/// Helper to create a test orchestrator with persistent tempdir
+async fn create_test_orchestrator() -> (MemoryOrchestrator, tempfile::TempDir) {
     let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder::new());
-    MemoryOrchestrator::new("/tmp/test_mcp_orch", embedder)
+    let dir = tempfile::tempdir().expect("Failed to create tempdir");
+    let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
         .await
-        .expect("Failed to create orchestrator")
+        .expect("Failed to create orchestrator");
+    (orchestrator, dir)
 }
 
 /// Helper to parse tool input from JSON
@@ -267,7 +269,7 @@ fn test_end_session_input_validation_minimal() {
 
 #[tokio::test]
 async fn test_remember_tool_integration() {
-    let orchestrator = create_test_orchestrator().await;
+    let (orchestrator, _dir) = create_test_orchestrator().await;
 
     // Simulate remember tool call
     let content = "Important project deadline".to_string();
@@ -283,7 +285,7 @@ async fn test_remember_tool_integration() {
 
 #[tokio::test]
 async fn test_recall_tool_integration() {
-    let orchestrator = create_test_orchestrator().await;
+    let (orchestrator, _dir) = create_test_orchestrator().await;
 
     // Store memories first
     let _ = orchestrator
@@ -303,7 +305,7 @@ async fn test_recall_tool_integration() {
 
 #[tokio::test]
 async fn test_memorize_tool_integration() {
-    let orchestrator = create_test_orchestrator().await;
+    let (orchestrator, _dir) = create_test_orchestrator().await;
 
     // Store a memory in Synapse
     let memory_id = orchestrator
@@ -318,7 +320,7 @@ async fn test_memorize_tool_integration() {
 
 #[tokio::test]
 async fn test_forget_tool_integration() {
-    let orchestrator = create_test_orchestrator().await;
+    let (orchestrator, _dir) = create_test_orchestrator().await;
 
     // Store a memory
     let memory_id = orchestrator
@@ -339,7 +341,7 @@ async fn test_forget_tool_integration() {
 
 #[tokio::test]
 async fn test_end_session_tool_integration() {
-    let orchestrator = create_test_orchestrator().await;
+    let (orchestrator, _dir) = create_test_orchestrator().await;
 
     // Store memories
     let _ = orchestrator
@@ -364,7 +366,7 @@ async fn test_end_session_tool_integration() {
 
 #[tokio::test]
 async fn test_blended_search_synapse_and_cortex() {
-    let orchestrator = create_test_orchestrator().await;
+    let (orchestrator, _dir) = create_test_orchestrator().await;
 
     // Store in Synapse
     let synapse_id = orchestrator
@@ -389,7 +391,7 @@ async fn test_blended_search_synapse_and_cortex() {
 
 #[tokio::test]
 async fn test_recall_deduplication() {
-    let orchestrator = create_test_orchestrator().await;
+    let (orchestrator, _dir) = create_test_orchestrator().await;
 
     // Store same content in both tiers (simulating duplication)
     let content = "Duplicate test".to_string();
@@ -415,7 +417,7 @@ async fn test_recall_deduplication() {
 
 #[tokio::test]
 async fn test_forget_nonexistent_memory() {
-    let orchestrator = create_test_orchestrator().await;
+    let (orchestrator, _dir) = create_test_orchestrator().await;
 
     // Try to forget a memory that doesn't exist
     let fake_id = MemoryId::new();
@@ -427,7 +429,7 @@ async fn test_forget_nonexistent_memory() {
 
 #[tokio::test]
 async fn test_memorize_nonexistent_memory() {
-    let orchestrator = create_test_orchestrator().await;
+    let (orchestrator, _dir) = create_test_orchestrator().await;
 
     // Try to promote a memory that doesn't exist
     let fake_id = MemoryId::new();
@@ -439,7 +441,7 @@ async fn test_memorize_nonexistent_memory() {
 
 #[tokio::test]
 async fn test_recall_empty_query() {
-    let orchestrator = create_test_orchestrator().await;
+    let (orchestrator, _dir) = create_test_orchestrator().await;
 
     // Store a memory first
     let _ = orchestrator
@@ -463,7 +465,7 @@ async fn test_recall_empty_query() {
 
 #[tokio::test]
 async fn test_recall_with_zero_limit() {
-    let orchestrator = create_test_orchestrator().await;
+    let (orchestrator, _dir) = create_test_orchestrator().await;
 
     // Store a memory
     let _ = orchestrator
@@ -480,7 +482,7 @@ async fn test_recall_with_zero_limit() {
 
 #[tokio::test]
 async fn test_recall_with_large_limit() {
-    let orchestrator = create_test_orchestrator().await;
+    let (orchestrator, _dir) = create_test_orchestrator().await;
 
     // Store multiple memories
     for i in 0..5 {
@@ -503,7 +505,7 @@ async fn test_recall_with_large_limit() {
 
 #[tokio::test]
 async fn test_remember_assigns_synapse_tier() {
-    let orchestrator = create_test_orchestrator().await;
+    let (orchestrator, _dir) = create_test_orchestrator().await;
 
     let _memory_id = orchestrator
         .remember("Test".to_string(), HashMap::new())
@@ -520,7 +522,7 @@ async fn test_remember_assigns_synapse_tier() {
 
 #[tokio::test]
 async fn test_memorize_assigns_cortex_tier() {
-    let orchestrator = create_test_orchestrator().await;
+    let (orchestrator, _dir) = create_test_orchestrator().await;
 
     let memory_id = orchestrator
         .remember("Test".to_string(), HashMap::new())
@@ -545,7 +547,7 @@ async fn test_memorize_assigns_cortex_tier() {
 
 #[tokio::test]
 async fn test_recall_ranking_by_similarity() {
-    let orchestrator = create_test_orchestrator().await;
+    let (orchestrator, _dir) = create_test_orchestrator().await;
 
     // Store memories with varying similarity to query
     let _ = orchestrator
@@ -572,7 +574,7 @@ async fn test_recall_ranking_by_similarity() {
 
 #[tokio::test]
 async fn test_auto_promotion_on_session_end() {
-    let orchestrator = create_test_orchestrator().await;
+    let (orchestrator, _dir) = create_test_orchestrator().await;
 
     // Store high-salience memory (default salience is 0.5)
     let _high_salience_id = orchestrator
@@ -604,7 +606,7 @@ async fn test_auto_promotion_on_session_end() {
 
 #[tokio::test]
 async fn test_remember_generates_embedding() {
-    let orchestrator = create_test_orchestrator().await;
+    let (orchestrator, _dir) = create_test_orchestrator().await;
 
     let _memory_id = orchestrator
         .remember("Test content".to_string(), HashMap::new())
@@ -622,7 +624,7 @@ async fn test_remember_generates_embedding() {
 
 #[tokio::test]
 async fn test_embedding_consistency() {
-    let orchestrator = create_test_orchestrator().await;
+    let (orchestrator, _dir) = create_test_orchestrator().await;
 
     let content = "Consistent content".to_string();
     let _id1 = orchestrator
@@ -657,7 +659,7 @@ async fn test_embedding_consistency() {
 
 #[tokio::test]
 async fn test_memory_metadata_preservation() {
-    let orchestrator = create_test_orchestrator().await;
+    let (orchestrator, _dir) = create_test_orchestrator().await;
 
     let content = "Test content".to_string();
     let mut metadata = HashMap::new();
@@ -679,7 +681,7 @@ async fn test_memory_metadata_preservation() {
 
 #[tokio::test]
 async fn test_memory_id_uniqueness() {
-    let orchestrator = create_test_orchestrator().await;
+    let (orchestrator, _dir) = create_test_orchestrator().await;
 
     let id1 = orchestrator
         .remember("Content 1".to_string(), HashMap::new())
@@ -695,7 +697,7 @@ async fn test_memory_id_uniqueness() {
 
 #[tokio::test]
 async fn test_memory_timestamp_generation() {
-    let orchestrator = create_test_orchestrator().await;
+    let (orchestrator, _dir) = create_test_orchestrator().await;
 
     let _memory_id = orchestrator
         .remember("Test".to_string(), HashMap::new())
@@ -713,7 +715,7 @@ async fn test_memory_timestamp_generation() {
 
 #[tokio::test]
 async fn test_synapse_and_cortex_lengths() {
-    let orchestrator = create_test_orchestrator().await;
+    let (orchestrator, _dir) = create_test_orchestrator().await;
 
     // Initially empty
     assert_eq!(orchestrator.synapse_len().await.unwrap(), 0);

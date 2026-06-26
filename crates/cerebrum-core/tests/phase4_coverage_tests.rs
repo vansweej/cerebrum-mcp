@@ -525,8 +525,9 @@ async fn test_synapse_stress_many_clears() {
 async fn test_orchestrator_with_concurrent_mixed_operations() {
     let embedder = Arc::new(MockEmbedder::new());
     let synapse = Arc::new(SynapseMemory::new(embedder.clone()));
+    let dir = tempfile::tempdir().unwrap();
     let orchestrator = Arc::new(
-        MemoryOrchestrator::new(":memory:", embedder.clone())
+        MemoryOrchestrator::new(dir.path(), "memories", 384, embedder.clone())
             .await
             .unwrap(),
     );
@@ -583,8 +584,9 @@ async fn test_orchestrator_with_concurrent_mixed_operations() {
 #[tokio::test]
 async fn test_concurrent_orchestrator_operations() {
     let embedder = Arc::new(MockEmbedder::new());
+    let dir = tempfile::tempdir().unwrap();
     let orchestrator = Arc::new(
-        MemoryOrchestrator::new(":memory:", embedder.clone())
+        MemoryOrchestrator::new(dir.path(), "memories", 384, embedder.clone())
             .await
             .unwrap(),
     );
