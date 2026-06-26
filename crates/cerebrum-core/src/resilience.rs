@@ -359,4 +359,32 @@ mod tests {
         // Both should share the same state
         assert_eq!(cloned.state(), breaker.state());
     }
+
+    #[test]
+    fn test_retry_config_default() {
+        let default_config = RetryConfig::default();
+        let new_config = RetryConfig::new();
+        assert_eq!(
+            default_config.calculate_backoff(0).as_millis(),
+            new_config.calculate_backoff(0).as_millis()
+        );
+    }
+
+    #[test]
+    fn test_circuit_breaker_config_default() {
+        let config = CircuitBreakerConfig::default();
+        assert_eq!(config.failure_threshold, 5);
+        assert_eq!(config.timeout_ms, 60000);
+    }
+
+    #[test]
+    fn test_retry_config_with_backoff_multiplier() {
+        let config = RetryConfig::new()
+            .with_initial_backoff_ms(100)
+            .with_backoff_multiplier(3.0)
+            .with_jitter(false);
+        let backoff0 = config.calculate_backoff(0);
+        let backoff1 = config.calculate_backoff(1);
+        assert!(backoff1.as_millis() > backoff0.as_millis());
+    }
 }
