@@ -1,6 +1,5 @@
 mod mcp_server;
 
-use cerebrum_core::embedder::MockEmbedder;
 use cerebrum_core::orchestrator::MemoryOrchestrator;
 use mcp_server::CerebrumHandler;
 use rmcp::transport::async_rw::AsyncRwTransport;
@@ -12,20 +11,9 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
     tracing::info!("Starting Cerebrum MCP server...");
 
-    // Initialize embedder
-    let embedder: Arc<dyn cerebrum_core::Embedder> = Arc::new(MockEmbedder::new());
-
-    // Initialize memory orchestrator with Config
+    // Initialize memory orchestrator with real Ollama embeddings from Config.
     let config = cerebrum_core::Config::default();
-    let orchestrator = Arc::new(
-        MemoryOrchestrator::new(
-            &config.db_path,
-            &config.table_name,
-            config.embedding_dim,
-            embedder,
-        )
-        .await?,
-    );
+    let orchestrator = Arc::new(MemoryOrchestrator::from_config(&config).await?);
     let handler = CerebrumHandler::new(orchestrator);
 
     tracing::info!("Cerebrum MCP server initialized");

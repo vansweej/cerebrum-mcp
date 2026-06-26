@@ -5,6 +5,15 @@
 //! struct directly (e.g. in tests, set `db_path` to a `tempdir()` path).
 
 use std::path::PathBuf;
+use std::time::Duration;
+
+/// Total deadline for the Ollama embed request (generous enough to tolerate a
+/// cold model load).
+pub const DEFAULT_EMBED_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// TCP connect deadline for the Ollama embed request (short because "cannot
+/// connect" is unambiguous).
+pub const DEFAULT_EMBED_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Configuration for `cerebrum-core` storage.
 ///
@@ -22,8 +31,20 @@ pub struct Config {
     pub db_path: PathBuf,
     /// Name of the LanceDB table that holds memories.
     pub table_name: String,
-    /// Expected dimension of the embedding vectors.
+    /// Expected dimension of the embedding vectors (768 for nomic-embed-text).
     pub embedding_dim: usize,
+    /// Base URL of the local Ollama instance (no trailing slash).
+    pub ollama_url: String,
+    /// Name of the Ollama embedding model to use.
+    pub embed_model: String,
+    /// Prefix prepended to queries before embedding (nomic asymmetric search).
+    pub query_prefix: String,
+    /// Prefix prepended to documents before embedding (nomic asymmetric search).
+    pub document_prefix: String,
+    /// Total deadline for the Ollama embed request (connect + response).
+    pub embed_timeout: Duration,
+    /// TCP connect deadline for the Ollama embed request.
+    pub embed_connect_timeout: Duration,
 }
 
 impl Default for Config {
@@ -31,7 +52,13 @@ impl Default for Config {
         Self {
             db_path: PathBuf::from("./data/cerebrum"),
             table_name: "memories".to_string(),
-            embedding_dim: 384,
+            embedding_dim: 768,
+            ollama_url: "http://localhost:11434".to_string(),
+            embed_model: "nomic-embed-text".to_string(),
+            query_prefix: "search_query: ".to_string(),
+            document_prefix: "search_document: ".to_string(),
+            embed_timeout: DEFAULT_EMBED_TIMEOUT,
+            embed_connect_timeout: DEFAULT_EMBED_CONNECT_TIMEOUT,
         }
     }
 }
@@ -53,7 +80,17 @@ mod tests {
     }
 
     #[test]
-    fn default_embedding_dim_is_384() {
-        assert_eq!(Config::default().embedding_dim, 384);
+    fn default_embedding_dim_is_768() {
+        assert_eq!(Config::default().embedding_dim, 768);
+    }
+
+    #[test]
+    fn default_ollama_url_is_localhost() {
+        assert_eq!(Config::default().ollama_url, "http://localhost:11434");
+    }
+
+    #[test]
+    fn default_embed_model_is_nomic() {
+        assert_eq!(Config::default().embed_model, "nomic-embed-text");
     }
 }

@@ -62,6 +62,99 @@ A two-tier agent memory subsystem implemented as a single Model Context Protocol
    # Install Nix from https://nixos.org/download.html
    ```
 
+## Quick Start
+
+### Prerequisites
+
+1. **Ollama Server** (for real semantic embeddings)
+   ```bash
+   # Install Ollama from https://ollama.ai
+   # Start the Ollama server
+   ollama serve
+   
+   # In another terminal, pull the nomic-embed-text model
+   ollama pull nomic-embed-text
+   ```
+
+2. **Rust & Nix** (for development)
+   ```bash
+   # Install Nix from https://nixos.org/download.html
+   ```
+
+### Runtime Dependencies
+
+**Ollama is a hard dependency** for production deployments. The system requires:
+
+- **Ollama Server:** Running at `http://localhost:11434` (configurable via `Config.ollama_url`)
+- **Embedding Model:** `nomic-embed-text` must be pulled: `ollama pull nomic-embed-text`
+- **Embedding Dimension:** 768-dimensional vectors (nomic-embed-text standard)
+- **Connection Timeout:** 5 seconds (configurable via `Config.embed_connect_timeout`)
+- **Request Timeout:** 60 seconds (configurable via `Config.embed_timeout`)
+
+If Ollama is unavailable at startup, `MemoryOrchestrator::from_config()` will fail with a descriptive error message. The warmup probe validates the Ollama connection and embedding dimension before any memory operations begin.
+
+### Semantic Search Prefixes
+
+Cerebrum applies asymmetric search prefixes (nomic best practice) to improve semantic search quality:
+
+- **Document Prefix:** `"search_document: "` - prepended to stored memory content before embedding
+- **Query Prefix:** `"search_query: "` - prepended to search queries before embedding
+
+These prefixes are configurable via `Config.query_prefix` and `Config.document_prefix`. The orchestrator applies them automatically before embedding; the original text is stored in `MemoryEntry.content`.
+
+Example:
+```rust
+// Config with custom prefixes
+let config = Config {
+    query_prefix: "search_query: ".to_string(),
+    document_prefix: "search_document: ".to_string(),
+    ..Default::default()
+};
+
+// When remember("user preferences") is called:
+// 1. Orchestrator embeds: "search_document: user preferences"
+// 2. MemoryEntry stores: "user preferences" (original text)
+
+// When recall("preferences") is called:
+// 1. Orchestrator embeds: "search_query: preferences"
+// 2. Both Synapse and Cortex search using the query vector
+```
+
+### Schema Migration
+
+**⚠️ Important:** Changing `embedding_dim` requires wiping the LanceDB schema.
+
+The LanceDB table schema is fixed at creation time. If you change `Config.embedding_dim` (e.g., from 384 to 768), the old schema is incompatible and must be wiped:
+
+```bash
+# Wipe the old schema
+rm -rf ~/.local/share/cerebrum/data/cerebrum/
+
+# On next run, Cerebrum will create a new table with the correct dimension
+```
+
+**Migration Scenarios:**
+
+1. **Upgrading from 384-dim to 768-dim (nomic-embed-text):**
+   ```bash
+   # 1. Stop Cerebrum
+   # 2. Wipe old schema
+   rm -rf ~/.local/share/cerebrum/data/cerebrum/
+   # 3. Update Config.embedding_dim to 768
+   # 4. Restart Cerebrum (new table created automatically)
+   # 5. Memories are lost; re-populate via remember() calls
+   ```
+
+2. **Changing Ollama model:**
+   - If the new model has a different dimension, follow the schema wipe procedure above
+   - If the new model has the same dimension, no schema wipe is needed
+   - Use the migration tooling (Reembed/Preserve/Hybrid strategies) to re-embed existing memories
+
+3. **Preserving memories during migration:**
+   - Use `MigrationManager` with `MigrationStrategy::Preserve` to keep old embeddings
+   - Use `MigrationStrategy::Reembed` to re-embed all memories with the new model
+   - Use `MigrationStrategy::Hybrid` to re-embed high-salience memories only
+
 ### Running Cerebrum
 
 ```bash

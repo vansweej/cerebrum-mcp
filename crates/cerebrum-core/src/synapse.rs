@@ -1,4 +1,3 @@
-use crate::embedder::Embedder;
 use crate::error::Result;
 use crate::models::{MemoryEntry, MemoryId, MemoryScope};
 use crate::traits::MemoryStore;
@@ -11,18 +10,38 @@ use std::sync::Arc;
 ///
 /// Stores memories in a thread-safe HashMap. Memories are volatile and cleared
 /// when the session ends. Supports semantic search using embeddings.
-#[derive(Clone)]
+///
+/// # Vector-Based Operation
+/// The Synapse store operates on query **vectors**, never raw text. The orchestrator owns
+/// the [`Embedder`] and embeds the query exactly once before calling
+/// `retrieve` / `retrieve_by_scope`, passing the resulting vector to the store.
+/// This keeps embedding concerns out of the storage layer entirely.
+///
+/// # Similarity & Salience Blending
+/// Memories are ranked using a blended score:
+/// ```text
+/// score = 0.7 * cosine_similarity(query_vec, memory_embedding) + 0.3 * memory_salience
+/// ```
+/// This formula balances semantic relevance (70%) with importance/salience (30%).
+/// High-salience memories are boosted in rankings even if they're not perfect matches.
+///
+/// # Thread Safety
+/// Uses `Arc<RwLock<HashMap>>` for thread-safe concurrent access.
+/// Multiple threads can read simultaneously; writes are serialized.
+///
+/// # Session Scoping
+/// Memories stored in Synapse are session-scoped and cleared when the session ends.
+/// Use `memorize()` to promote high-salience memories to Cortex for persistence.
+#[derive(Clone, Default)]
 pub struct SynapseMemory {
     memories: Arc<RwLock<HashMap<MemoryId, MemoryEntry>>>,
-    embedder: Arc<dyn Embedder>,
 }
 
 impl SynapseMemory {
     /// Create a new empty Synapse memory store.
-    pub fn new(embedder: Arc<dyn Embedder>) -> Self {
+    pub fn new() -> Self {
         Self {
             memories: Arc::new(RwLock::new(HashMap::new())),
-            embedder,
         }
     }
 
@@ -66,12 +85,6 @@ impl SynapseMemory {
     }
 }
 
-impl Default for SynapseMemory {
-    fn default() -> Self {
-        Self::new(Arc::new(crate::embedder::MockEmbedder::new()))
-    }
-}
-
 #[async_trait]
 impl MemoryStore for SynapseMemory {
     async fn store(&self, entry: MemoryEntry) -> Result<()> {
@@ -79,10 +92,7 @@ impl MemoryStore for SynapseMemory {
         Ok(())
     }
 
-    async fn retrieve(&self, query: &str, limit: usize) -> Result<Vec<MemoryEntry>> {
-        // Generate embedding for query using the configured embedder
-        let query_embedding: Vec<f32> = self.embedder.embed(query).await?;
-
+    async fn retrieve(&self, query_vec: &[f32], limit: usize) -> Result<Vec<MemoryEntry>> {
         let memories = self.memories.read();
 
         // If no memories, return empty
@@ -90,12 +100,12 @@ impl MemoryStore for SynapseMemory {
             return Ok(Vec::new());
         }
 
-        // Score all memories by similarity
+        // Score all memories by similarity against the supplied query vector
         let mut scored: Vec<_> = memories
             .values()
             .filter_map(|entry| {
                 entry.embedding.as_ref().map(|embedding| {
-                    let similarity = Self::cosine_similarity(&query_embedding, embedding);
+                    let similarity = Self::cosine_similarity(query_vec, embedding);
                     // Combine similarity with salience for ranking
                     let score = (similarity * 0.7) + (entry.salience * 0.3);
                     (entry.clone(), score)
@@ -116,13 +126,10 @@ impl MemoryStore for SynapseMemory {
 
     async fn retrieve_by_scope(
         &self,
-        query: &str,
+        query_vec: &[f32],
         scope: &MemoryScope,
         limit: usize,
     ) -> Result<Vec<MemoryEntry>> {
-        // Generate embedding for query using the configured embedder
-        let query_embedding: Vec<f32> = self.embedder.embed(query).await?;
-
         let memories = self.memories.read();
 
         // If no memories, return empty
@@ -136,7 +143,7 @@ impl MemoryStore for SynapseMemory {
             .filter(|entry| entry.scope.matches(scope))
             .filter_map(|entry| {
                 entry.embedding.as_ref().map(|embedding| {
-                    let similarity = Self::cosine_similarity(&query_embedding, embedding);
+                    let similarity = Self::cosine_similarity(query_vec, embedding);
                     // Combine similarity with salience for ranking
                     let score = (similarity * 0.7) + (entry.salience * 0.3);
                     (entry.clone(), score)
@@ -159,18 +166,38 @@ impl MemoryStore for SynapseMemory {
         self.memories.write().remove(id);
         Ok(())
     }
+
+    /// List all memories. Delegates to the inherent [`SynapseMemory::list`].
+    async fn list(&self) -> Result<Vec<MemoryEntry>> {
+        Ok(self.memories.read().values().cloned().collect())
+    }
+
+    /// Count memories. Delegates to the inherent [`SynapseMemory::len`].
+    async fn len(&self) -> Result<usize> {
+        Ok(self.memories.read().len())
+    }
+
+    /// Whether the store is empty. Delegates to the inherent
+    /// [`SynapseMemory::is_empty`].
+    async fn is_empty(&self) -> Result<bool> {
+        Ok(self.memories.read().is_empty())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::embedder::MockEmbedder;
+    use crate::traits::Embedder;
 
     fn create_synapse() -> SynapseMemory {
-        SynapseMemory::new(Arc::new(MockEmbedder::new()))
+        SynapseMemory::new()
     }
 
-    /// Helper function to generate embeddings from text using MockEmbedder
+    /// Helper function to generate embeddings from text using MockEmbedder.
+    ///
+    /// Tests now pass query **vectors** to `retrieve`, mirroring how the
+    /// orchestrator embeds the query once before calling the store.
     async fn generate_embedding(text: &str) -> Vec<f32> {
         let embedder = MockEmbedder::new();
         embedder
@@ -198,7 +225,10 @@ mod tests {
         synapse.store(entry.clone()).await.unwrap();
         assert_eq!(synapse.len(), 1);
 
-        let results = synapse.retrieve("test", 10).await.unwrap();
+        let results = synapse
+            .retrieve(&generate_embedding("test").await, 10)
+            .await
+            .unwrap();
         assert!(!results.is_empty());
     }
 
@@ -261,7 +291,10 @@ mod tests {
     #[tokio::test]
     async fn test_synapse_retrieve_empty() {
         let synapse = create_synapse();
-        let results = synapse.retrieve("test", 10).await.unwrap();
+        let results = synapse
+            .retrieve(&generate_embedding("test").await, 10)
+            .await
+            .unwrap();
         assert!(results.is_empty());
     }
 
@@ -285,7 +318,10 @@ mod tests {
         synapse.store(entry1).await.unwrap();
         synapse.store(entry2).await.unwrap();
 
-        let results = synapse.retrieve("important", 10).await.unwrap();
+        let results = synapse
+            .retrieve(&generate_embedding("important").await, 10)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 2);
         // Higher salience should rank first
         assert!(results[0].salience >= results[1].salience);
@@ -313,7 +349,11 @@ mod tests {
 
         // Global scope should match all
         let results = synapse
-            .retrieve_by_scope("memory", &MemoryScope::Global, 10)
+            .retrieve_by_scope(
+                &generate_embedding("memory").await,
+                &MemoryScope::Global,
+                10,
+            )
             .await
             .unwrap();
         assert_eq!(results.len(), 2);
@@ -341,7 +381,11 @@ mod tests {
 
         // User1 scope should only match user1 memories
         let results = synapse
-            .retrieve_by_scope("memory", &MemoryScope::User("user1".to_string()), 10)
+            .retrieve_by_scope(
+                &generate_embedding("memory").await,
+                &MemoryScope::User("user1".to_string()),
+                10,
+            )
             .await
             .unwrap();
         assert_eq!(results.len(), 1);
@@ -370,7 +414,11 @@ mod tests {
 
         // Agent1 scope should only match agent1 memories
         let results = synapse
-            .retrieve_by_scope("memory", &MemoryScope::Agent("agent1".to_string()), 10)
+            .retrieve_by_scope(
+                &generate_embedding("memory").await,
+                &MemoryScope::Agent("agent1".to_string()),
+                10,
+            )
             .await
             .unwrap();
         assert_eq!(results.len(), 1);
@@ -399,7 +447,11 @@ mod tests {
 
         // Session1 scope should only match session1 memories
         let results = synapse
-            .retrieve_by_scope("memory", &MemoryScope::Session("session1".to_string()), 10)
+            .retrieve_by_scope(
+                &generate_embedding("memory").await,
+                &MemoryScope::Session("session1".to_string()),
+                10,
+            )
             .await
             .unwrap();
         assert_eq!(results.len(), 1);
@@ -447,7 +499,10 @@ mod tests {
         synapse.store(entry_unrelated).await.unwrap();
 
         // Query with "dog" - exact match should rank first
-        let results = synapse.retrieve("dog", 10).await.unwrap();
+        let results = synapse
+            .retrieve(&generate_embedding("dog").await, 10)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 3);
 
         // Exact match should be first (similarity = 1.0 to itself)
@@ -482,7 +537,10 @@ mod tests {
         synapse.store(entry_low_sal).await.unwrap();
 
         // Query with "important" - should rank first due to exact match + high salience
-        let results = synapse.retrieve("important", 10).await.unwrap();
+        let results = synapse
+            .retrieve(&generate_embedding("important").await, 10)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 2);
 
         // "important" should rank first
@@ -517,7 +575,10 @@ mod tests {
         synapse.store(entry_low_sal).await.unwrap();
 
         // Query with "memory" - both have same similarity (1.0) but different salience
-        let results = synapse.retrieve("memory", 10).await.unwrap();
+        let results = synapse
+            .retrieve(&generate_embedding("memory").await, 10)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 2);
 
         // High salience should rank first
@@ -545,15 +606,24 @@ mod tests {
         }
 
         // Query with limit 2
-        let results = synapse.retrieve("memory", 2).await.unwrap();
+        let results = synapse
+            .retrieve(&generate_embedding("memory").await, 2)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 2);
 
         // Query with limit 10 (more than stored)
-        let results = synapse.retrieve("memory", 10).await.unwrap();
+        let results = synapse
+            .retrieve(&generate_embedding("memory").await, 10)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 5);
 
         // Query with limit 0
-        let results = synapse.retrieve("memory", 0).await.unwrap();
+        let results = synapse
+            .retrieve(&generate_embedding("memory").await, 0)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 0);
     }
 
@@ -583,7 +653,10 @@ mod tests {
         synapse.store(entry_low_sal).await.unwrap();
 
         // Query with "test" - both have same similarity (1.0) but different salience
-        let results = synapse.retrieve("test", 10).await.unwrap();
+        let results = synapse
+            .retrieve(&generate_embedding("test").await, 10)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 2);
 
         // High salience should rank first when similarity is equal

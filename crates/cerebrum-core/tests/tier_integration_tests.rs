@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 #[tokio::test]
 async fn test_synapse_basic_workflow() {
-    let synapse = SynapseMemory::new(Arc::new(MockEmbedder::new()));
+    let synapse = SynapseMemory::new();
 
     // Store multiple memories
     let id1 = MemoryId::new();
@@ -32,7 +32,7 @@ async fn test_synapse_basic_workflow() {
 
 #[tokio::test]
 async fn test_synapse_semantic_search() {
-    let synapse = SynapseMemory::new(Arc::new(MockEmbedder::new()));
+    let synapse = SynapseMemory::new();
 
     let id1 = MemoryId::new();
     let embedding1 = vec![0.1; 384];
@@ -50,13 +50,13 @@ async fn test_synapse_semantic_search() {
     synapse.store(entry2).await.unwrap();
 
     // Search should return results
-    let results = synapse.retrieve("fox", 10).await.unwrap();
+    let results = synapse.retrieve(&vec![0.1; 384], 10).await.unwrap();
     assert!(!results.is_empty());
 }
 
 #[tokio::test]
 async fn test_synapse_salience_ranking() {
-    let synapse = SynapseMemory::new(Arc::new(MockEmbedder::new()));
+    let synapse = SynapseMemory::new();
 
     let id1 = MemoryId::new();
     let embedding = vec![0.5; 384];
@@ -74,7 +74,7 @@ async fn test_synapse_salience_ranking() {
     synapse.store(entry1).await.unwrap();
     synapse.store(entry2).await.unwrap();
 
-    let results = synapse.retrieve("important", 10).await.unwrap();
+    let results = synapse.retrieve(&vec![0.5; 384], 10).await.unwrap();
     assert_eq!(results.len(), 2);
     assert!(results[0].salience > results[1].salience);
 }
@@ -85,9 +85,8 @@ async fn test_synapse_salience_ranking() {
 
 #[tokio::test]
 async fn test_cortex_basic_workflow() {
-    let embedder: Arc<dyn cerebrum_core::Embedder> = Arc::new(MockEmbedder::new());
     let dir = tempfile::tempdir().unwrap();
-    let cortex = LanceDBCortex::new(dir.path(), "memories", 384, embedder)
+    let cortex = LanceDBCortex::new(dir.path(), "memories", 384)
         .await
         .unwrap();
 
@@ -109,9 +108,8 @@ async fn test_cortex_basic_workflow() {
 
 #[tokio::test]
 async fn test_cortex_search_by_salience() {
-    let embedder: Arc<dyn cerebrum_core::Embedder> = Arc::new(MockEmbedder::new());
     let dir = tempfile::tempdir().unwrap();
-    let cortex = LanceDBCortex::new(dir.path(), "memories", 384, embedder)
+    let cortex = LanceDBCortex::new(dir.path(), "memories", 384)
         .await
         .unwrap();
 
@@ -137,9 +135,8 @@ async fn test_cortex_search_by_salience() {
 
 #[tokio::test]
 async fn test_cortex_persistence_simulation() {
-    let embedder: Arc<dyn cerebrum_core::Embedder> = Arc::new(MockEmbedder::new());
     let dir = tempfile::tempdir().unwrap();
-    let cortex = LanceDBCortex::new(dir.path(), "memories", 384, embedder)
+    let cortex = LanceDBCortex::new(dir.path(), "memories", 384)
         .await
         .unwrap();
 
@@ -167,7 +164,7 @@ async fn test_cortex_persistence_simulation() {
 async fn test_orchestrator_remember_and_recall() {
     let embedder: Arc<dyn cerebrum_core::Embedder> = Arc::new(MockEmbedder::new());
     let dir = tempfile::tempdir().unwrap();
-    let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+    let orchestrator = MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
         .await
         .unwrap();
 
@@ -193,7 +190,7 @@ async fn test_orchestrator_remember_and_recall() {
 async fn test_orchestrator_promotion_workflow() {
     let embedder: Arc<dyn cerebrum_core::Embedder> = Arc::new(MockEmbedder::new());
     let dir = tempfile::tempdir().unwrap();
-    let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+    let orchestrator = MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
         .await
         .unwrap();
 
@@ -217,7 +214,7 @@ async fn test_orchestrator_promotion_workflow() {
 async fn test_orchestrator_forget_from_synapse() {
     let embedder: Arc<dyn cerebrum_core::Embedder> = Arc::new(MockEmbedder::new());
     let dir = tempfile::tempdir().unwrap();
-    let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+    let orchestrator = MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
         .await
         .unwrap();
 
@@ -237,7 +234,7 @@ async fn test_orchestrator_forget_from_synapse() {
 async fn test_orchestrator_forget_from_cortex() {
     let embedder: Arc<dyn cerebrum_core::Embedder> = Arc::new(MockEmbedder::new());
     let dir = tempfile::tempdir().unwrap();
-    let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+    let orchestrator = MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
         .await
         .unwrap();
 
@@ -258,7 +255,7 @@ async fn test_orchestrator_forget_from_cortex() {
 async fn test_orchestrator_blended_search() {
     let embedder: Arc<dyn cerebrum_core::Embedder> = Arc::new(MockEmbedder::new());
     let dir = tempfile::tempdir().unwrap();
-    let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+    let orchestrator = MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
         .await
         .unwrap();
 
@@ -286,7 +283,7 @@ async fn test_orchestrator_blended_search() {
 async fn test_orchestrator_end_session_clears_synapse() {
     let embedder: Arc<dyn cerebrum_core::Embedder> = Arc::new(MockEmbedder::new());
     let dir = tempfile::tempdir().unwrap();
-    let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+    let orchestrator = MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
         .await
         .unwrap();
 
@@ -313,7 +310,7 @@ async fn test_orchestrator_end_session_clears_synapse() {
 async fn test_orchestrator_end_session_auto_promotes() {
     let embedder: Arc<dyn cerebrum_core::Embedder> = Arc::new(MockEmbedder::new());
     let dir = tempfile::tempdir().unwrap();
-    let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+    let orchestrator = MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
         .await
         .unwrap();
 
@@ -358,7 +355,7 @@ async fn test_orchestrator_end_session_auto_promotes() {
 async fn test_orchestrator_metadata_preservation() {
     let embedder: Arc<dyn cerebrum_core::Embedder> = Arc::new(MockEmbedder::new());
     let dir = tempfile::tempdir().unwrap();
-    let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+    let orchestrator = MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
         .await
         .unwrap();
 
@@ -379,7 +376,7 @@ async fn test_orchestrator_metadata_preservation() {
 async fn test_orchestrator_embedding_generation() {
     let embedder: Arc<dyn cerebrum_core::Embedder> = Arc::new(MockEmbedder::new());
     let dir = tempfile::tempdir().unwrap();
-    let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+    let orchestrator = MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
         .await
         .unwrap();
 
@@ -397,7 +394,7 @@ async fn test_orchestrator_embedding_generation() {
 async fn test_orchestrator_tier_assignment() {
     let embedder: Arc<dyn cerebrum_core::Embedder> = Arc::new(MockEmbedder::new());
     let dir = tempfile::tempdir().unwrap();
-    let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+    let orchestrator = MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
         .await
         .unwrap();
 
@@ -419,7 +416,7 @@ async fn test_orchestrator_tier_assignment() {
 async fn test_orchestrator_multiple_promotions() {
     let embedder: Arc<dyn cerebrum_core::Embedder> = Arc::new(MockEmbedder::new());
     let dir = tempfile::tempdir().unwrap();
-    let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+    let orchestrator = MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
         .await
         .unwrap();
 
@@ -454,7 +451,7 @@ async fn test_orchestrator_multiple_promotions() {
 async fn test_orchestrator_recall_limit() {
     let embedder: Arc<dyn cerebrum_core::Embedder> = Arc::new(MockEmbedder::new());
     let dir = tempfile::tempdir().unwrap();
-    let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+    let orchestrator = MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
         .await
         .unwrap();
 
@@ -476,7 +473,7 @@ async fn test_orchestrator_recall_limit() {
 async fn test_orchestrator_cross_tier_recall() {
     let embedder: Arc<dyn cerebrum_core::Embedder> = Arc::new(MockEmbedder::new());
     let dir = tempfile::tempdir().unwrap();
-    let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+    let orchestrator = MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
         .await
         .unwrap();
 
@@ -516,7 +513,7 @@ async fn test_orchestrator_cross_tier_recall() {
 async fn test_orchestrator_empty_recall() {
     let embedder: Arc<dyn cerebrum_core::Embedder> = Arc::new(MockEmbedder::new());
     let dir = tempfile::tempdir().unwrap();
-    let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+    let orchestrator = MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
         .await
         .unwrap();
 
@@ -532,7 +529,7 @@ async fn test_orchestrator_empty_recall() {
 async fn test_orchestrator_forget_nonexistent() {
     let embedder: Arc<dyn cerebrum_core::Embedder> = Arc::new(MockEmbedder::new());
     let dir = tempfile::tempdir().unwrap();
-    let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+    let orchestrator = MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
         .await
         .unwrap();
 
@@ -547,7 +544,7 @@ async fn test_orchestrator_forget_nonexistent() {
 async fn test_orchestrator_session_isolation() {
     let embedder: Arc<dyn cerebrum_core::Embedder> = Arc::new(MockEmbedder::new());
     let dir = tempfile::tempdir().unwrap();
-    let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+    let orchestrator = MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
         .await
         .unwrap();
 

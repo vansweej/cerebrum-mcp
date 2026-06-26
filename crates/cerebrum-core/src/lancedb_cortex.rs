@@ -15,7 +15,6 @@ use lancedb::query::{ExecutableQuery, QueryBase};
 use lancedb::{Connection, Table};
 use serde::{Deserialize, Serialize};
 
-use crate::embedder::Embedder;
 use crate::error::{CerebrumError, Result};
 use crate::models::{MemoryEntry, MemoryId, MemoryScope};
 use crate::traits::MemoryStore;
@@ -143,45 +142,57 @@ fn parse_scope_string(scope_str: &str) -> Result<MemoryScope> {
 /// Stores memories in a vector database for efficient semantic search and
 /// persistent storage across sessions. Supports salience-based ranking.
 ///
+/// # Vector-Based Operation
+/// The LanceDB `Cortex` store operates on query **vectors**, never raw text.
+/// The orchestrator owns the embedder and passes a pre-computed query vector
+/// into `retrieve()` / `retrieve_by_scope()`. This keeps embedding concerns
+/// out of the storage layer entirely.
+///
+/// # Persistence
+/// Unlike Synapse (in-memory), Cortex persists memories to disk via LanceDB.
+/// Memories survive session restarts and can be searched across multiple sessions.
+/// The LanceDB table is stored at `{db_path}/data/{table_name}.lance`.
+///
+/// # Schema & Dimension
+/// The table schema is fixed at creation time and includes:
+/// - `id`: Unique memory identifier
+/// - `content`: Original memory text (without prefixes)
+/// - `salience`: Importance score (0.0-1.0)
+/// - `timestamp`: Creation time (ISO 8601)
+/// - `source_session_id`: Session where memory originated
+/// - `scope`: Memory visibility (Global, User, Agent, Session)
+/// - `embedding`: 768-dimensional vector (nomic-embed-text)
+/// - `metadata_json`: Arbitrary metadata as JSON
+///
+/// **Important:** Changing `embedding_dim` requires wiping the table schema.
+/// See README.md "Schema Migration" section for details.
+///
+/// # Connection Management
 /// The LanceDB `Connection` is held for the lifetime of the store; the
 /// `Table` handle is re-opened on each operation to avoid stale snapshots.
+/// This ensures we always read the latest data.
 pub struct LanceDBCortex {
-    /// Held LanceDB connection.
+    /// Held LanceDB connection (persistent across operations).
     conn: Connection,
-    /// Table name for storing memories.
+    /// Table name for storing memories (default: "memories").
     table_name: String,
-    /// Embedding dimension (384 for nomic-embed-text).
+    /// Embedding dimension (768 for nomic-embed-text).
+    /// Must match the dimension of vectors passed to `retrieve()`.
     embedding_dim: usize,
-    /// Embedder for generating query embeddings.
-    embedder: Arc<dyn Embedder>,
 }
 
 impl LanceDBCortex {
     /// Open (or create) the memories table at `db_path`.
     ///
-    /// Mirrors athenaeum `Store::open`. Asserts that `embedder.dimension() == dim`
-    /// at construction time to fail-fast before any schema-corrupting insert.
+    /// Mirrors athenaeum `Store::open`. The store operates purely on vectors —
+    /// it holds no embedder. The orchestrator owns the embedder and validates
+    /// the embedding dimension against `dim` before constructing the store.
     ///
     /// # Arguments
     /// * `db_path`    – Path to the LanceDB directory (relative or absolute).
     /// * `table_name` – Name of the table within the database.
-    /// * `dim`        – Expected embedding dimension; must match `embedder.dimension()`.
-    /// * `embedder`   – Embedder used for query embedding during retrieval.
-    pub async fn new(
-        db_path: &Path,
-        table_name: &str,
-        dim: usize,
-        embedder: Arc<dyn Embedder>,
-    ) -> Result<Self> {
-        // Fail-fast: embedder dimension must match schema dimension.
-        let embedder_dim = embedder.dimension();
-        if embedder_dim != dim {
-            return Err(CerebrumError::Validation(format!(
-                "Embedder dimension ({}) does not match schema dimension ({})",
-                embedder_dim, dim
-            )));
-        }
-
+    /// * `dim`        – Expected embedding dimension for the table schema.
+    pub async fn new(db_path: &Path, table_name: &str, dim: usize) -> Result<Self> {
         let path = db_path
             .to_str()
             .ok_or_else(|| CerebrumError::Database("non-UTF-8 db_path".to_string()))?;
@@ -209,7 +220,6 @@ impl LanceDBCortex {
             conn,
             table_name: table_name.to_string(),
             embedding_dim: dim,
-            embedder,
         })
     }
 
@@ -412,9 +422,7 @@ impl MemoryStore for LanceDBCortex {
     ///
     /// Performs an exact full-scan so that the blend `0.7*similarity + 0.3*salience`
     /// is computed over every row — no memory can be dropped by a vector pre-filter.
-    async fn retrieve(&self, query: &str, limit: usize) -> Result<Vec<MemoryEntry>> {
-        let query_embedding = self.embedder.embed(query).await?;
-
+    async fn retrieve(&self, query_vec: &[f32], limit: usize) -> Result<Vec<MemoryEntry>> {
         let table = self.table().await?;
         let row_count = table
             .count_rows(None)
@@ -438,7 +446,7 @@ impl MemoryStore for LanceDBCortex {
             .iter()
             .flat_map(|b| Self::batch_to_records(b).unwrap_or_default())
             .map(|record| {
-                let sim = Self::cosine_similarity(&query_embedding, &record.embedding);
+                let sim = Self::cosine_similarity(query_vec, &record.embedding);
                 let score = sim * 0.7 + record.salience * 0.3;
                 (record, score)
             })
@@ -460,12 +468,10 @@ impl MemoryStore for LanceDBCortex {
     /// handle the bidirectional Global-matches-all semantic.
     async fn retrieve_by_scope(
         &self,
-        query: &str,
+        query_vec: &[f32],
         scope: &MemoryScope,
         limit: usize,
     ) -> Result<Vec<MemoryEntry>> {
-        let query_embedding = self.embedder.embed(query).await?;
-
         let table = self.table().await?;
         let row_count = table
             .count_rows(None)
@@ -511,7 +517,7 @@ impl MemoryStore for LanceDBCortex {
                 if !scope.matches(&entry.scope) {
                     return None;
                 }
-                let sim = Self::cosine_similarity(&query_embedding, &record.embedding);
+                let sim = Self::cosine_similarity(query_vec, &record.embedding);
                 let score = sim * 0.7 + record.salience * 0.3;
                 Some((record, score))
             })
@@ -589,23 +595,27 @@ impl MemoryStore for LanceDBCortex {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::embedder::MockEmbedder;
     use crate::models::MemoryTier;
     use tempfile;
+
+    /// Constant query vector matching the stored test embeddings (dim 384).
+    ///
+    /// Tests pass query vectors directly now that the store no longer embeds.
+    fn qvec() -> Vec<f32> {
+        vec![0.1; 384]
+    }
 
     #[tokio::test]
     async fn test_lancedb_cortex_new() {
         let dir = tempfile::tempdir().unwrap();
-        let embedder = Arc::new(MockEmbedder::new());
-        let result = LanceDBCortex::new(dir.path(), "memories", 384, embedder).await;
+        let result = LanceDBCortex::new(dir.path(), "memories", 384).await;
         assert!(result.is_ok());
     }
 
     #[tokio::test]
     async fn test_lancedb_cortex_store_and_retrieve() {
         let dir = tempfile::tempdir().unwrap();
-        let embedder = Arc::new(MockEmbedder::new());
-        let cortex = LanceDBCortex::new(dir.path(), "memories", 384, embedder.clone())
+        let cortex = LanceDBCortex::new(dir.path(), "memories", 384)
             .await
             .unwrap();
 
@@ -616,15 +626,14 @@ mod tests {
 
         cortex.store(entry.clone()).await.unwrap();
 
-        let results = cortex.retrieve("test", 10).await.unwrap();
+        let results = cortex.retrieve(&qvec(), 10).await.unwrap();
         assert!(!results.is_empty());
     }
 
     #[tokio::test]
     async fn test_lancedb_cortex_len() {
         let dir = tempfile::tempdir().unwrap();
-        let embedder = Arc::new(MockEmbedder::new());
-        let cortex = LanceDBCortex::new(dir.path(), "memories", 384, embedder.clone())
+        let cortex = LanceDBCortex::new(dir.path(), "memories", 384)
             .await
             .unwrap();
 
@@ -642,8 +651,7 @@ mod tests {
     #[tokio::test]
     async fn test_lancedb_cortex_delete() {
         let dir = tempfile::tempdir().unwrap();
-        let embedder = Arc::new(MockEmbedder::new());
-        let cortex = LanceDBCortex::new(dir.path(), "memories", 384, embedder.clone())
+        let cortex = LanceDBCortex::new(dir.path(), "memories", 384)
             .await
             .unwrap();
 
@@ -656,15 +664,14 @@ mod tests {
         cortex.store(entry).await.unwrap();
         cortex.delete(&id).await.unwrap();
 
-        let results = cortex.retrieve("test", 10).await.unwrap();
+        let results = cortex.retrieve(&qvec(), 10).await.unwrap();
         assert!(results.is_empty());
     }
 
     #[tokio::test]
     async fn test_lancedb_cortex_retrieve_by_scope() {
         let dir = tempfile::tempdir().unwrap();
-        let embedder = Arc::new(MockEmbedder::new());
-        let cortex = LanceDBCortex::new(dir.path(), "memories", 384, embedder.clone())
+        let cortex = LanceDBCortex::new(dir.path(), "memories", 384)
             .await
             .unwrap();
 
@@ -677,7 +684,7 @@ mod tests {
         cortex.store(entry).await.unwrap();
 
         let results = cortex
-            .retrieve_by_scope("test", &MemoryScope::User("user1".to_string()), 10)
+            .retrieve_by_scope(&qvec(), &MemoryScope::User("user1".to_string()), 10)
             .await
             .unwrap();
         assert!(!results.is_empty());
@@ -686,8 +693,7 @@ mod tests {
     #[tokio::test]
     async fn test_lancedb_cortex_retrieve_by_scope_mismatch() {
         let dir = tempfile::tempdir().unwrap();
-        let embedder = Arc::new(MockEmbedder::new());
-        let cortex = LanceDBCortex::new(dir.path(), "memories", 384, embedder.clone())
+        let cortex = LanceDBCortex::new(dir.path(), "memories", 384)
             .await
             .unwrap();
 
@@ -700,7 +706,7 @@ mod tests {
         cortex.store(entry).await.unwrap();
 
         let results = cortex
-            .retrieve_by_scope("test", &MemoryScope::User("user2".to_string()), 10)
+            .retrieve_by_scope(&qvec(), &MemoryScope::User("user2".to_string()), 10)
             .await
             .unwrap();
         assert!(results.is_empty());
@@ -709,8 +715,7 @@ mod tests {
     #[tokio::test]
     async fn test_lancedb_cortex_retrieve_by_scope_global() {
         let dir = tempfile::tempdir().unwrap();
-        let embedder = Arc::new(MockEmbedder::new());
-        let cortex = LanceDBCortex::new(dir.path(), "memories", 384, embedder.clone())
+        let cortex = LanceDBCortex::new(dir.path(), "memories", 384)
             .await
             .unwrap();
 
@@ -723,7 +728,7 @@ mod tests {
         cortex.store(entry).await.unwrap();
 
         let results = cortex
-            .retrieve_by_scope("test", &MemoryScope::Global, 10)
+            .retrieve_by_scope(&qvec(), &MemoryScope::Global, 10)
             .await
             .unwrap();
         assert!(!results.is_empty());
@@ -732,8 +737,7 @@ mod tests {
     #[tokio::test]
     async fn test_lancedb_cortex_is_empty() {
         let dir = tempfile::tempdir().unwrap();
-        let embedder = Arc::new(MockEmbedder::new());
-        let cortex = LanceDBCortex::new(dir.path(), "memories", 384, embedder.clone())
+        let cortex = LanceDBCortex::new(dir.path(), "memories", 384)
             .await
             .unwrap();
 
@@ -743,8 +747,7 @@ mod tests {
     #[tokio::test]
     async fn test_lancedb_cortex_list() {
         let dir = tempfile::tempdir().unwrap();
-        let embedder = Arc::new(MockEmbedder::new());
-        let cortex = LanceDBCortex::new(dir.path(), "memories", 384, embedder.clone())
+        let cortex = LanceDBCortex::new(dir.path(), "memories", 384)
             .await
             .unwrap();
 
@@ -762,11 +765,10 @@ mod tests {
     #[tokio::test]
     async fn test_cortex_persists_across_reopen() {
         let dir = tempfile::tempdir().unwrap();
-        let embedder = Arc::new(MockEmbedder::new());
         let id = MemoryId::new();
 
         {
-            let cortex = LanceDBCortex::new(dir.path(), "memories", 384, embedder.clone())
+            let cortex = LanceDBCortex::new(dir.path(), "memories", 384)
                 .await
                 .unwrap();
             let entry = MemoryEntry::builder(id, "persistent memory".to_string())
@@ -778,7 +780,7 @@ mod tests {
         // LanceDBCortex dropped here — connection closed.
 
         {
-            let cortex = LanceDBCortex::new(dir.path(), "memories", 384, embedder.clone())
+            let cortex = LanceDBCortex::new(dir.path(), "memories", 384)
                 .await
                 .unwrap();
             let results = cortex.list().await.unwrap();
@@ -789,26 +791,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_cortex_dimension_mismatch_returns_error() {
-        let dir = tempfile::tempdir().unwrap();
-        let embedder = Arc::new(MockEmbedder::new()); // reports dimension 384
-                                                      // Request dim=768 — must be rejected before any LanceDB call.
-        let result = LanceDBCortex::new(dir.path(), "memories", 768, embedder).await;
-        assert!(
-            result.is_err(),
-            "mismatched dimension must error at construction"
-        );
-    }
-
-    #[tokio::test]
     async fn test_cortex_search_empty_table_returns_empty_vec() {
         let dir = tempfile::tempdir().unwrap();
-        let embedder = Arc::new(MockEmbedder::new());
-        let cortex = LanceDBCortex::new(dir.path(), "memories", 384, embedder)
+        let cortex = LanceDBCortex::new(dir.path(), "memories", 384)
             .await
             .unwrap();
         // All read operations on a fresh store must succeed with empty results.
-        assert!(cortex.retrieve("anything", 10).await.unwrap().is_empty());
+        assert!(cortex.retrieve(&qvec(), 10).await.unwrap().is_empty());
         assert!(cortex.list().await.unwrap().is_empty());
         assert_eq!(cortex.len().await.unwrap(), 0);
         assert!(cortex.is_empty().await.unwrap());
@@ -817,8 +806,7 @@ mod tests {
     #[tokio::test]
     async fn test_cortex_store_upserts_on_same_id() {
         let dir = tempfile::tempdir().unwrap();
-        let embedder = Arc::new(MockEmbedder::new());
-        let cortex = LanceDBCortex::new(dir.path(), "memories", 384, embedder)
+        let cortex = LanceDBCortex::new(dir.path(), "memories", 384)
             .await
             .unwrap();
         let id = MemoryId::new();
@@ -850,12 +838,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_cortex_list_and_len_work_without_embedding_query() {
-        // MockEmbedder rejects empty strings. If list() or len() internally called
-        // retrieve("*", usize::MAX), this test would fail. It passing proves the
-        // explicit overrides are in place and the defaults are not used.
+        // list()/len()/is_empty() must never embed or scan via a query vector.
+        // These explicit overrides count rows directly instead of going through
+        // the trait default that would call retrieve.
         let dir = tempfile::tempdir().unwrap();
-        let embedder = Arc::new(MockEmbedder::new());
-        let cortex = LanceDBCortex::new(dir.path(), "memories", 384, embedder)
+        let cortex = LanceDBCortex::new(dir.path(), "memories", 384)
             .await
             .unwrap();
         // These must succeed without embedding anything.
@@ -970,8 +957,7 @@ mod tests {
     #[tokio::test]
     async fn test_lancedb_cortex_search_by_salience() {
         let dir = tempfile::tempdir().unwrap();
-        let embedder = Arc::new(MockEmbedder::new());
-        let cortex = LanceDBCortex::new(dir.path(), "memories", 384, embedder.clone())
+        let cortex = LanceDBCortex::new(dir.path(), "memories", 384)
             .await
             .unwrap();
 
@@ -1000,8 +986,7 @@ mod tests {
     #[tokio::test]
     async fn test_lancedb_cortex_search_by_salience_limit() {
         let dir = tempfile::tempdir().unwrap();
-        let embedder = Arc::new(MockEmbedder::new());
-        let cortex = LanceDBCortex::new(dir.path(), "memories", 384, embedder.clone())
+        let cortex = LanceDBCortex::new(dir.path(), "memories", 384)
             .await
             .unwrap();
 

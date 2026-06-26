@@ -197,7 +197,7 @@ fn test_metrics_average_time_calculation() {
 #[tokio::test]
 async fn test_synapse_with_minimum_salience() {
     let embedder = Arc::new(MockEmbedder::new());
-    let synapse = SynapseMemory::new(embedder.clone());
+    let synapse = SynapseMemory::new();
     let embedding = embedder.embed("test content").await.unwrap();
     let entry = MemoryEntry::builder(MemoryId::new(), "test content".to_string())
         .salience(0.0)
@@ -210,7 +210,7 @@ async fn test_synapse_with_minimum_salience() {
 #[tokio::test]
 async fn test_synapse_with_maximum_salience() {
     let embedder = Arc::new(MockEmbedder::new());
-    let synapse = SynapseMemory::new(embedder.clone());
+    let synapse = SynapseMemory::new();
     let embedding = embedder.embed("test content").await.unwrap();
     let entry = MemoryEntry::builder(MemoryId::new(), "test content".to_string())
         .salience(1.0)
@@ -223,7 +223,7 @@ async fn test_synapse_with_maximum_salience() {
 #[tokio::test]
 async fn test_synapse_with_mid_range_salience() {
     let embedder = Arc::new(MockEmbedder::new());
-    let synapse = SynapseMemory::new(embedder.clone());
+    let synapse = SynapseMemory::new();
     let embedding = embedder.embed("test content").await.unwrap();
     let entry = MemoryEntry::builder(MemoryId::new(), "test content".to_string())
         .salience(0.5)
@@ -240,7 +240,7 @@ async fn test_synapse_with_mid_range_salience() {
 #[tokio::test]
 async fn test_synapse_with_1000_memories() {
     let embedder = Arc::new(MockEmbedder::new());
-    let synapse = SynapseMemory::new(embedder.clone());
+    let synapse = SynapseMemory::new();
 
     for i in 0..1000 {
         let embedding = embedder.embed(&format!("content {}", i)).await.unwrap();
@@ -257,7 +257,7 @@ async fn test_synapse_with_1000_memories() {
 #[tokio::test]
 async fn test_synapse_retrieve_with_large_limit() {
     let embedder = Arc::new(MockEmbedder::new());
-    let synapse = SynapseMemory::new(embedder.clone());
+    let synapse = SynapseMemory::new();
 
     // Store 100 memories
     for i in 0..100 {
@@ -270,14 +270,14 @@ async fn test_synapse_retrieve_with_large_limit() {
     }
 
     // Retrieve with limit larger than stored memories
-    let results = synapse.retrieve("content", 500).await.unwrap();
+    let results = synapse.retrieve(&vec![0.1; 384], 500).await.unwrap();
     assert_eq!(results.len(), 100);
 }
 
 #[tokio::test]
 async fn test_synapse_retrieve_with_zero_limit() {
     let embedder = Arc::new(MockEmbedder::new());
-    let synapse = SynapseMemory::new(embedder.clone());
+    let synapse = SynapseMemory::new();
 
     let embedding = embedder.embed("test content").await.unwrap();
     let entry = MemoryEntry::builder(MemoryId::new(), "test content".to_string())
@@ -287,14 +287,14 @@ async fn test_synapse_retrieve_with_zero_limit() {
     synapse.store(entry).await.unwrap();
 
     // Retrieve with limit 0
-    let results = synapse.retrieve("test", 0).await.unwrap();
+    let results = synapse.retrieve(&vec![0.1; 384], 0).await.unwrap();
     assert_eq!(results.len(), 0);
 }
 
 #[tokio::test]
 async fn test_synapse_retrieve_with_limit_one() {
     let embedder = Arc::new(MockEmbedder::new());
-    let synapse = SynapseMemory::new(embedder.clone());
+    let synapse = SynapseMemory::new();
 
     // Store 10 memories
     for i in 0..10 {
@@ -307,7 +307,7 @@ async fn test_synapse_retrieve_with_limit_one() {
     }
 
     // Retrieve with limit 1
-    let results = synapse.retrieve("content", 1).await.unwrap();
+    let results = synapse.retrieve(&vec![0.1; 384], 1).await.unwrap();
     assert_eq!(results.len(), 1);
 }
 
@@ -318,7 +318,7 @@ async fn test_synapse_retrieve_with_limit_one() {
 #[tokio::test]
 async fn test_concurrent_synapse_stores() {
     let embedder = Arc::new(MockEmbedder::new());
-    let synapse = Arc::new(SynapseMemory::new(embedder.clone()));
+    let synapse = Arc::new(SynapseMemory::new());
 
     let mut handles: Vec<JoinHandle<()>> = vec![];
 
@@ -357,7 +357,7 @@ async fn test_concurrent_synapse_stores() {
 #[tokio::test]
 async fn test_concurrent_synapse_retrieves() {
     let embedder = Arc::new(MockEmbedder::new());
-    let synapse = Arc::new(SynapseMemory::new(embedder.clone()));
+    let synapse = Arc::new(SynapseMemory::new());
 
     // Store 50 memories
     for i in 0..50 {
@@ -376,7 +376,7 @@ async fn test_concurrent_synapse_retrieves() {
         let synapse_clone = synapse.clone();
 
         let handle = tokio::spawn(async move {
-            let results = synapse_clone.retrieve("content", 10).await.unwrap();
+            let results = synapse_clone.retrieve(&vec![0.1; 384], 10).await.unwrap();
             results.len()
         });
 
@@ -468,7 +468,7 @@ async fn test_concurrent_metrics_updates() {
 #[tokio::test]
 async fn test_synapse_stress_many_deletes() {
     let embedder = Arc::new(MockEmbedder::new());
-    let synapse = SynapseMemory::new(embedder.clone());
+    let synapse = SynapseMemory::new();
 
     // Store 100 memories
     let mut ids = vec![];
@@ -496,7 +496,7 @@ async fn test_synapse_stress_many_deletes() {
 #[tokio::test]
 async fn test_synapse_stress_many_clears() {
     let embedder = Arc::new(MockEmbedder::new());
-    let synapse = SynapseMemory::new(embedder.clone());
+    let synapse = SynapseMemory::new();
 
     for _iteration in 0..10 {
         // Store 50 memories
@@ -524,10 +524,10 @@ async fn test_synapse_stress_many_clears() {
 #[tokio::test]
 async fn test_orchestrator_with_concurrent_mixed_operations() {
     let embedder = Arc::new(MockEmbedder::new());
-    let synapse = Arc::new(SynapseMemory::new(embedder.clone()));
+    let synapse = Arc::new(SynapseMemory::new());
     let dir = tempfile::tempdir().unwrap();
     let orchestrator = Arc::new(
-        MemoryOrchestrator::new(dir.path(), "memories", 384, embedder.clone())
+        MemoryOrchestrator::new(embedder.clone(), dir.path(), "memories", 384)
             .await
             .unwrap(),
     );
@@ -586,7 +586,7 @@ async fn test_concurrent_orchestrator_operations() {
     let embedder = Arc::new(MockEmbedder::new());
     let dir = tempfile::tempdir().unwrap();
     let orchestrator = Arc::new(
-        MemoryOrchestrator::new(dir.path(), "memories", 384, embedder.clone())
+        MemoryOrchestrator::new(embedder.clone(), dir.path(), "memories", 384)
             .await
             .unwrap(),
     );
@@ -624,7 +624,7 @@ async fn test_concurrent_orchestrator_operations() {
 #[tokio::test]
 async fn test_synapse_retrieve_by_scope_with_mixed_scopes() {
     let embedder = Arc::new(MockEmbedder::new());
-    let synapse = SynapseMemory::new(embedder.clone());
+    let synapse = SynapseMemory::new();
 
     // Store memories with different scopes
     let scopes = vec![
@@ -651,7 +651,7 @@ async fn test_synapse_retrieve_by_scope_with_mixed_scopes() {
 
     // Retrieve by specific user scope (should only match user1 entries)
     let user_results = synapse
-        .retrieve_by_scope("content", &MemoryScope::User("user1".to_string()), 10)
+        .retrieve_by_scope(&vec![0.1; 384], &MemoryScope::User("user1".to_string()), 10)
         .await
         .unwrap();
     // Should get 5 from user1 + 5 from Global (since Global matches all)
@@ -659,7 +659,11 @@ async fn test_synapse_retrieve_by_scope_with_mixed_scopes() {
 
     // Retrieve by specific session scope (should only match session1 entries)
     let session_results = synapse
-        .retrieve_by_scope("content", &MemoryScope::Session("session1".to_string()), 10)
+        .retrieve_by_scope(
+            &vec![0.1; 384],
+            &MemoryScope::Session("session1".to_string()),
+            10,
+        )
         .await
         .unwrap();
     // Should get 5 from session1 + 5 from Global (since Global matches all)

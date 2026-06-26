@@ -1,84 +1,146 @@
+use crate::config::{DEFAULT_EMBED_CONNECT_TIMEOUT, DEFAULT_EMBED_TIMEOUT};
 use crate::error::{CerebrumError, Result};
 use crate::observability::OperationMetrics;
 use crate::resilience::{CircuitBreaker, CircuitBreakerConfig};
 use crate::traits::Embedder;
 use async_trait::async_trait;
-use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-/// Request body for Ollama embedding API
+/// Request body for the Ollama batch embedding API (`POST /api/embed`).
+///
+/// The Ollama `/api/embed` endpoint accepts a batch of texts and returns
+/// a batch of embeddings. This struct represents a single request.
+///
+/// # Example
+/// ```json
+/// {
+///   "model": "nomic-embed-text",
+///   "input": ["search_document: user preferences", "search_document: system settings"]
+/// }
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct OllamaEmbedRequest {
     model: String,
-    prompt: String,
+    input: Vec<String>,
 }
 
-/// Response body from Ollama embedding API
+/// Response body from the Ollama batch embedding API.
+///
+/// The Ollama `/api/embed` endpoint returns a batch of embeddings.
+/// Each embedding is a 768-dimensional vector for nomic-embed-text.
+///
+/// # Example
+/// ```json
+/// {
+///   "embeddings": [
+///     [0.1, 0.2, ..., 0.3],  // 768 dimensions
+///     [0.4, 0.5, ..., 0.6]   // 768 dimensions
+///   ]
+/// }
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct OllamaEmbedResponse {
-    embedding: Vec<f32>,
+    embeddings: Vec<Vec<f32>>,
 }
 
-/// Global HTTP client for Ollama requests
-static HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
-    reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new())
-});
-
-/// Ollama-based embedder using nomic-embed-text model (384-dimensional).
+/// Ollama-based embedder using the nomic-embed-text model (768-dimensional).
 ///
-/// Provides real semantic embeddings for accurate similarity search.
-/// Uses the nomic-embed-text model which is optimized for performance and quality.
-/// Requires Ollama to be running at http://localhost:11434
+/// Provides real semantic embeddings for accurate similarity search via the
+/// Ollama batch `POST /api/embed` endpoint
+/// (`{model, input:[...]}` -> `{embeddings:[[...]]}`).
+/// Requires Ollama to be running at the configured endpoint.
 ///
+/// # Batch API
+/// This embedder uses the batch API (`/api/embed`) which accepts multiple texts
+/// in a single request. Currently, we embed one text at a time for simplicity,
+/// but the infrastructure supports batch processing for future optimization.
+///
+/// # Prefix Handling
+/// This embedder is single-text and model-agnostic: it applies NO query or
+/// document prefixes. The orchestrator is responsible for prefixing before
+/// calling `embed()`. This separation of concerns keeps the embedder simple
+/// and the prefix logic centralized in the orchestrator.
+///
+/// # Observability & Resilience
 /// Includes observability metrics and resilience patterns:
-/// - Tracks latency, success rate, and error counts
+/// - Tracks latency, success rate, and error counts via `OperationMetrics`
 /// - Circuit breaker for handling Ollama endpoint failures
+/// - Automatic failure detection and recovery
+///
+/// # Dimension Validation
+/// The embedder validates that returned embeddings match the expected dimension.
+/// For nomic-embed-text, this is always 768. If Ollama returns a different
+/// dimension, the request fails with a validation error.
 pub struct FastEmbedEmbedder {
-    /// Ollama endpoint URL
+    /// Ollama endpoint URL (e.g., "http://localhost:11434").
     endpoint: String,
-    /// Model name (default: nomic-embed-text)
+    /// Model name (default: "nomic-embed-text").
     model: String,
-    /// Metrics for tracking operation performance
+    /// Expected embedding dimension produced by `model` (768 for nomic-embed-text).
+    dim: usize,
+    /// Per-instance HTTP client (carries connect/request timeouts).
+    /// Configured with `embed_timeout` and `embed_connect_timeout` from Config.
+    client: reqwest::Client,
+    /// Metrics for tracking operation performance (latency, success rate, error counts).
     metrics: Arc<OperationMetrics>,
-    /// Circuit breaker for handling transient failures
+    /// Circuit breaker for handling transient failures.
+    /// Opens after 5 consecutive failures, transitions to HalfOpen after 60 seconds.
     circuit_breaker: Arc<CircuitBreaker>,
 }
 
 impl FastEmbedEmbedder {
-    /// Create a new FastEmbed embedder with Ollama backend.
-    ///
-    /// # Arguments
-    /// * `endpoint` - Ollama API endpoint (default: http://localhost:11434)
-    /// * `model` - Model name (default: nomic-embed-text)
+    /// Create a new embedder pointing at the local Ollama instance using
+    /// `nomic-embed-text` (768-dimensional) and the crate default timeouts.
     pub fn new() -> Self {
-        Self {
-            endpoint: "http://localhost:11434".to_string(),
-            model: "nomic-embed-text".to_string(),
-            metrics: Arc::new(OperationMetrics::new()),
-            circuit_breaker: Arc::new(CircuitBreaker::new(CircuitBreakerConfig::new())),
-        }
+        Self::with_timeouts(
+            "http://localhost:11434".to_string(),
+            "nomic-embed-text".to_string(),
+            768,
+            DEFAULT_EMBED_TIMEOUT,
+            DEFAULT_EMBED_CONNECT_TIMEOUT,
+        )
     }
 
-    /// Create a new FastEmbed embedder with custom endpoint.
+    /// Create a new embedder with a custom endpoint, defaulting to
+    /// `nomic-embed-text` (768-dimensional).
     pub fn with_endpoint(endpoint: String) -> Self {
-        Self {
-            endpoint,
-            model: "nomic-embed-text".to_string(),
-            metrics: Arc::new(OperationMetrics::new()),
-            circuit_breaker: Arc::new(CircuitBreaker::new(CircuitBreakerConfig::new())),
-        }
+        Self::with_config(endpoint, "nomic-embed-text".to_string(), 768)
     }
 
-    /// Create a new FastEmbed embedder with custom endpoint and model.
-    pub fn with_config(endpoint: String, model: String) -> Self {
+    /// Create a new embedder with a custom endpoint, model, and dimension,
+    /// using the crate default timeouts.
+    pub fn with_config(endpoint: String, model: String, dim: usize) -> Self {
+        Self::with_timeouts(
+            endpoint,
+            model,
+            dim,
+            DEFAULT_EMBED_TIMEOUT,
+            DEFAULT_EMBED_CONNECT_TIMEOUT,
+        )
+    }
+
+    /// Create a new embedder with explicit endpoint, model, dimension, and
+    /// request/connect timeouts.
+    pub fn with_timeouts(
+        endpoint: String,
+        model: String,
+        dim: usize,
+        timeout: Duration,
+        connect_timeout: Duration,
+    ) -> Self {
+        let client = reqwest::Client::builder()
+            .connect_timeout(connect_timeout)
+            .timeout(timeout)
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+
         Self {
             endpoint,
             model,
+            dim,
+            client,
             metrics: Arc::new(OperationMetrics::new()),
             circuit_breaker: Arc::new(CircuitBreaker::new(CircuitBreakerConfig::new())),
         }
@@ -86,7 +148,7 @@ impl FastEmbedEmbedder {
 
     /// Get the embedding dimension for this model.
     pub fn embedding_dim(&self) -> usize {
-        384 // nomic-embed-text produces 384-dimensional embeddings
+        self.dim
     }
 
     /// Get the metrics for this embedder.
@@ -104,7 +166,7 @@ impl FastEmbedEmbedder {
         let url = format!("{}/api/tags", self.endpoint);
         match tokio::time::timeout(
             std::time::Duration::from_secs(2),
-            HTTP_CLIENT.get(&url).send(),
+            self.client.get(&url).send(),
         )
         .await
         {
@@ -132,10 +194,11 @@ impl Embedder for FastEmbedEmbedder {
 
         let request = OllamaEmbedRequest {
             model: self.model.clone(),
-            prompt: text.to_string(),
+            input: vec![text.to_string()],
         };
 
-        let result = HTTP_CLIENT
+        let result = self
+            .client
             .post(&url)
             .json(&request)
             .send()
@@ -174,14 +237,28 @@ impl Embedder for FastEmbedEmbedder {
             CerebrumError::Embedding(format!("Failed to parse Ollama response: {}", e))
         })?;
 
+        // Take the first embedding from the batch response.
+        let embedding = match embed_response.embeddings.into_iter().next() {
+            Some(e) => e,
+            None => {
+                let duration_ms = start_time.elapsed().as_millis() as u64;
+                self.metrics.record_failure(duration_ms);
+                self.circuit_breaker.record_failure();
+                return Err(CerebrumError::Embedding(
+                    "Ollama returned no embeddings".to_string(),
+                ));
+            }
+        };
+
         // Verify dimensions
-        if embed_response.embedding.len() != 384 {
+        if embedding.len() != self.dim {
             let duration_ms = start_time.elapsed().as_millis() as u64;
             self.metrics.record_failure(duration_ms);
             self.circuit_breaker.record_failure();
             return Err(CerebrumError::Validation(format!(
-                "Invalid embedding dimension from Ollama: expected 384, got {}",
-                embed_response.embedding.len()
+                "Invalid embedding dimension from Ollama: expected {}, got {}",
+                self.dim,
+                embedding.len()
             )));
         }
 
@@ -190,11 +267,11 @@ impl Embedder for FastEmbedEmbedder {
         self.metrics.record_success(duration_ms);
         self.circuit_breaker.record_success();
 
-        Ok(embed_response.embedding)
+        Ok(embedding)
     }
 
     fn dimension(&self) -> usize {
-        384
+        self.dim
     }
 }
 
@@ -229,15 +306,17 @@ mod tests {
         let embedder = FastEmbedEmbedder::with_config(
             "http://custom:11434".to_string(),
             "custom-model".to_string(),
+            768,
         );
         assert_eq!(embedder.endpoint, "http://custom:11434");
         assert_eq!(embedder.model, "custom-model");
+        assert_eq!(embedder.dimension(), 768);
     }
 
     #[tokio::test]
     async fn test_fastembed_embedder_embedding_dim() {
         let embedder = FastEmbedEmbedder::new();
-        assert_eq!(embedder.embedding_dim(), 384);
+        assert_eq!(embedder.embedding_dim(), 768);
     }
 
     #[tokio::test]
@@ -250,7 +329,7 @@ mod tests {
         match result {
             Ok(embedding) => {
                 // Ollama is available
-                assert_eq!(embedding.len(), 384);
+                assert_eq!(embedding.len(), 768);
             }
             Err(CerebrumError::Embedding(msg)) => {
                 // Ollama is not available - this is expected in some environments
@@ -311,7 +390,7 @@ mod tests {
         // Empty text should still produce an embedding
         assert!(embedding.is_ok());
         let vec = embedding.unwrap();
-        assert_eq!(vec.len(), 384);
+        assert_eq!(vec.len(), 768);
     }
 
     #[tokio::test]
@@ -342,7 +421,7 @@ mod tests {
             let embedding_result = result.unwrap();
             assert!(embedding_result.is_ok());
             let vec = embedding_result.unwrap();
-            assert_eq!(vec.len(), 384);
+            assert_eq!(vec.len(), 768);
         }
     }
 
@@ -495,7 +574,7 @@ mod tests {
             .and(path("/api/embed"))
             .respond_with(
                 ResponseTemplate::new(200)
-                    .set_body_json(serde_json::json!({ "embedding": vec![0.1f32; 384] })),
+                    .set_body_json(serde_json::json!({ "embeddings": vec![vec![0.1f32; 768]] })),
             )
             .mount(&mock_server)
             .await;
@@ -504,7 +583,7 @@ mod tests {
         let result = embedder.embed("hello").await;
         assert!(result.is_ok());
         let embedding = result.unwrap();
-        assert_eq!(embedding.len(), 384);
+        assert_eq!(embedding.len(), 768);
         assert_eq!(embedder.metrics().successful_operations(), 1);
     }
 
@@ -568,7 +647,7 @@ mod tests {
             .and(path("/api/embed"))
             .respond_with(
                 ResponseTemplate::new(200)
-                    .set_body_json(serde_json::json!({ "embedding": [0.1f32, 0.2, 0.3] })),
+                    .set_body_json(serde_json::json!({ "embeddings": [[0.1f32, 0.2, 0.3]] })),
             )
             .mount(&mock_server)
             .await;

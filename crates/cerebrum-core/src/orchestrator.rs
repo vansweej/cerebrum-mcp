@@ -1,5 +1,7 @@
+use crate::config::Config;
 use crate::embedder::Embedder;
 use crate::error::Result;
+use crate::fastembed_embedder::FastEmbedEmbedder;
 use crate::lancedb_cortex::LanceDBCortex;
 use crate::models::{MemoryEntry, MemoryId, MemoryScope, MemoryTier};
 use crate::synapse::SynapseMemory;
@@ -10,37 +12,112 @@ use std::sync::Arc;
 
 /// Orchestrates memory operations across Synapse and Cortex tiers.
 ///
-/// Provides a unified interface for memory operations with automatic
-/// tier management, blended search, and promotion logic.
+/// The orchestrator is the sole owner of the [`Embedder`]: it embeds content
+/// on write and queries on read exactly once, passing query **vectors** down
+/// to both storage tiers. Stores never embed text themselves.
 pub struct MemoryOrchestrator {
     synapse: Arc<SynapseMemory>,
     cortex: Arc<dyn MemoryStore>,
     embedder: Arc<dyn Embedder>,
+    /// Prefix prepended to queries before embedding (nomic asymmetric search).
+    query_prefix: String,
+    /// Prefix prepended to documents before embedding (nomic asymmetric search).
+    document_prefix: String,
 }
 
 impl MemoryOrchestrator {
-    /// Create a new MemoryOrchestrator with LanceDB Cortex backend.
+    /// Create a new MemoryOrchestrator from pre-built parts (injectable).
+    ///
+    /// Mirrors the athenaeum `Engine::with_parts` pattern. Builds a fresh
+    /// in-memory Synapse tier and opens the LanceDB-backed Cortex tier. The
+    /// query/document prefixes default to empty strings, so `MockEmbedder`
+    /// tests are unaffected; [`MemoryOrchestrator::from_config`] sets them.
     ///
     /// # Arguments
+    /// * `embedder`   – Embedder instance for generating embeddings
     /// * `db_path`    – Path to the LanceDB database directory
     /// * `table_name` – Name of the LanceDB table
     /// * `dim`        – Expected embedding dimension
-    /// * `embedder`   – Embedder instance for generating embeddings
     pub async fn new(
+        embedder: Arc<dyn Embedder>,
         db_path: &Path,
         table_name: &str,
         dim: usize,
-        embedder: Arc<dyn Embedder>,
     ) -> Result<Self> {
-        let synapse = Arc::new(SynapseMemory::new(embedder.clone()));
+        let synapse = Arc::new(SynapseMemory::new());
         let cortex: Arc<dyn MemoryStore> =
-            Arc::new(LanceDBCortex::new(db_path, table_name, dim, embedder.clone()).await?);
+            Arc::new(LanceDBCortex::new(db_path, table_name, dim).await?);
 
         Ok(Self {
             synapse,
             cortex,
             embedder,
+            query_prefix: String::new(),
+            document_prefix: String::new(),
         })
+    }
+
+    /// Build a production orchestrator from a [`Config`].
+    ///
+    /// Mirrors the athenaeum `Engine::new` pattern: constructs a real
+    /// [`FastEmbedEmbedder`] against the configured Ollama endpoint, then
+    /// probes and warms up the model by embedding a sentinel string. If the
+    /// warmup vector does not match `config.embedding_dim` the build fails fast
+    /// before any schema-corrupting insert.
+    ///
+    /// # Warmup Probe
+    /// The warmup probe:
+    /// 1. Embeds a test string ("warmup") via Ollama
+    /// 2. Validates the returned vector has the expected dimension (768 for nomic-embed-text)
+    /// 3. Pre-loads the Ollama model to avoid cold-start hangs on first real request
+    /// 4. Fails fast if Ollama is unavailable or model dimension doesn't match
+    ///
+    /// # Prefix Application
+    /// The orchestrator stores the configured prefixes and applies them before embedding:
+    /// - `document_prefix` is prepended to content in `remember()` before embedding
+    /// - `query_prefix` is prepended to queries in `recall()` before embedding
+    /// - Original text is stored in `MemoryEntry.content` (without prefix)
+    /// - This follows nomic-embed-text best practices for asymmetric search
+    ///
+    /// # Errors
+    /// Returns an error if:
+    /// - Ollama is not available at the configured URL
+    /// - The embedding model is not found or fails to load
+    /// - The returned embedding dimension doesn't match `config.embedding_dim`
+    /// - LanceDB initialization fails
+    #[cfg(not(tarpaulin_include))]
+    pub async fn from_config(config: &Config) -> Result<Self> {
+        let embedder = FastEmbedEmbedder::with_timeouts(
+            config.ollama_url.clone(),
+            config.embed_model.clone(),
+            config.embedding_dim,
+            config.embed_timeout,
+            config.embed_connect_timeout,
+        );
+
+        // Probe + warmup: force a model load and validate the dimension.
+        // This fails fast before any schema-corrupting insert.
+        let warmup = embedder.embed("warmup").await?;
+        if warmup.len() != config.embedding_dim {
+            return Err(crate::error::CerebrumError::Validation(format!(
+                "Ollama model '{}' produced dimension {}, expected {}",
+                config.embed_model,
+                warmup.len(),
+                config.embedding_dim
+            )));
+        }
+
+        let embedder: Arc<dyn Embedder> = Arc::new(embedder);
+        let mut orchestrator = Self::new(
+            embedder,
+            &config.db_path,
+            &config.table_name,
+            config.embedding_dim,
+        )
+        .await?;
+        orchestrator.query_prefix = config.query_prefix.clone();
+        orchestrator.document_prefix = config.document_prefix.clone();
+        Ok(orchestrator)
     }
 
     /// Get a reference to the embedder.
@@ -60,8 +137,19 @@ impl MemoryOrchestrator {
 
     /// Store a memory in the Synapse tier (short-term).
     ///
+    /// # Embedding & Prefix Application
+    /// 1. Prepends `document_prefix` to the content (e.g., "search_document: ")
+    /// 2. Embeds the prefixed text via Ollama (768-dimensional vector)
+    /// 3. Stores the original (unprefixed) text in `MemoryEntry.content`
+    /// 4. Stores the embedding in `MemoryEntry.embedding`
+    ///
+    /// # Tier Assignment
+    /// - Memory is stored in **Synapse** (short-term, in-memory)
+    /// - Use `memorize()` to promote to **Cortex** (long-term, persistent)
+    /// - Use `end_session()` to auto-promote high-salience memories
+    ///
     /// # Arguments
-    /// * `content` - The memory content
+    /// * `content` - The memory content (will be prefixed before embedding)
     /// * `metadata` - Optional metadata key-value pairs
     ///
     /// # Returns
@@ -73,8 +161,12 @@ impl MemoryOrchestrator {
     ) -> Result<MemoryId> {
         let id = MemoryId::new();
 
-        // Generate embedding
-        let embedding = self.embedder.embed(&content).await?;
+        // Generate embedding once, prefixing for asymmetric (document) search.
+        // The prefix improves semantic search quality (nomic best practice).
+        let embedding = self
+            .embedder
+            .embed(&format!("{}{}", self.document_prefix, content))
+            .await?;
 
         // Create entry with embedding
         let mut entry = MemoryEntry::builder(id, content)
@@ -84,7 +176,7 @@ impl MemoryOrchestrator {
 
         entry.metadata = metadata;
 
-        // Store in Synapse
+        // Store in Synapse (short-term, in-memory)
         self.synapse.store(entry).await?;
 
         Ok(id)
@@ -92,19 +184,38 @@ impl MemoryOrchestrator {
 
     /// Recall memories matching a query from both tiers.
     ///
-    /// Performs blended search across Synapse and Cortex, merging and
-    /// ranking results by relevance and salience.
+    /// # Blended Search
+    /// Performs semantic search across both Synapse and Cortex:
+    /// 1. Embeds the query with `query_prefix` (e.g., "search_query: ")
+    /// 2. Searches Synapse (in-memory, fast, session-scoped)
+    /// 3. Searches Cortex (persistent, comprehensive)
+    /// 4. Merges results and deduplicates by ID
+    /// 5. Ranks by salience (descending)
+    /// 6. Returns top N results
+    ///
+    /// # Embedding & Prefix Application
+    /// - Prepends `query_prefix` to the query before embedding
+    /// - Embeds via Ollama (768-dimensional vector)
+    /// - Passes the same vector to both Synapse and Cortex
+    /// - This ensures consistent ranking across tiers
     ///
     /// # Arguments
-    /// * `query` - The search query
+    /// * `query` - The search query (will be prefixed before embedding)
     /// * `limit` - Maximum number of results to return
     ///
     /// # Returns
-    /// Ranked list of matching memories
+    /// Ranked list of matching memories (sorted by salience, descending)
     pub async fn recall(&self, query: String, limit: usize) -> Result<Vec<MemoryEntry>> {
-        // Search both tiers in parallel
-        let synapse_results = self.synapse.retrieve(&query, limit).await?;
-        let cortex_results = self.cortex.retrieve(&query, limit).await?;
+        // Embed the query exactly once (with the asymmetric query prefix), then
+        // pass the SAME vector to both tiers. This ensures consistent ranking.
+        let query_vec = self
+            .embedder
+            .embed(&format!("{}{}", self.query_prefix, query))
+            .await?;
+
+        // Search both tiers with the shared query vector.
+        let synapse_results = self.synapse.retrieve(&query_vec, limit).await?;
+        let cortex_results = self.cortex.retrieve(&query_vec, limit).await?;
 
         // Merge results
         let mut all_results = Vec::new();
@@ -144,12 +255,22 @@ impl MemoryOrchestrator {
         scope: MemoryScope,
         limit: usize,
     ) -> Result<Vec<MemoryEntry>> {
-        // Search both tiers in parallel with scope filtering
+        // Embed the query exactly once (with the asymmetric query prefix), then
+        // pass the SAME vector to both tiers.
+        let query_vec = self
+            .embedder
+            .embed(&format!("{}{}", self.query_prefix, query))
+            .await?;
+
+        // Search both tiers with the shared query vector and scope filtering.
         let synapse_results = self
             .synapse
-            .retrieve_by_scope(&query, &scope, limit)
+            .retrieve_by_scope(&query_vec, &scope, limit)
             .await?;
-        let cortex_results = self.cortex.retrieve_by_scope(&query, &scope, limit).await?;
+        let cortex_results = self
+            .cortex
+            .retrieve_by_scope(&query_vec, &scope, limit)
+            .await?;
 
         // Merge results
         let mut all_results = Vec::new();
@@ -264,7 +385,7 @@ mod tests {
     async fn test_orchestrator_new() {
         let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn Embedder> = Arc::new(crate::embedder::MockEmbedder::new());
-        let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+        let orchestrator = MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
             .await
             .expect("Failed to create orchestrator");
 
@@ -276,7 +397,7 @@ mod tests {
     async fn test_orchestrator_remember() {
         let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn Embedder> = Arc::new(crate::embedder::MockEmbedder::new());
-        let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+        let orchestrator = MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
             .await
             .expect("Failed to create orchestrator");
 
@@ -295,7 +416,7 @@ mod tests {
     async fn test_orchestrator_recall() {
         let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn Embedder> = Arc::new(crate::embedder::MockEmbedder::new());
-        let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+        let orchestrator = MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
             .await
             .expect("Failed to create orchestrator");
 
@@ -316,7 +437,7 @@ mod tests {
     async fn test_orchestrator_memorize() {
         let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn Embedder> = Arc::new(crate::embedder::MockEmbedder::new());
-        let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+        let orchestrator = MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
             .await
             .expect("Failed to create orchestrator");
 
@@ -338,7 +459,7 @@ mod tests {
     async fn test_orchestrator_forget() {
         let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn Embedder> = Arc::new(crate::embedder::MockEmbedder::new());
-        let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+        let orchestrator = MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
             .await
             .expect("Failed to create orchestrator");
 
@@ -358,7 +479,7 @@ mod tests {
     async fn test_orchestrator_end_session_with_promotion() {
         let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn Embedder> = Arc::new(crate::embedder::MockEmbedder::new());
-        let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+        let orchestrator = MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
             .await
             .expect("Failed to create orchestrator");
 
@@ -411,7 +532,7 @@ mod tests {
     async fn test_orchestrator_blended_recall() {
         let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn Embedder> = Arc::new(crate::embedder::MockEmbedder::new());
-        let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+        let orchestrator = MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
             .await
             .expect("Failed to create orchestrator");
 
@@ -445,7 +566,7 @@ mod tests {
     async fn test_orchestrator_recall_deduplication() {
         let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn Embedder> = Arc::new(crate::embedder::MockEmbedder::new());
-        let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+        let orchestrator = MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
             .await
             .expect("Failed to create orchestrator");
 
@@ -477,7 +598,7 @@ mod tests {
     async fn test_orchestrator_accessor_embedder() {
         let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn Embedder> = Arc::new(crate::embedder::MockEmbedder::new());
-        let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+        let orchestrator = MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
             .await
             .expect("Failed to create orchestrator");
 
@@ -494,7 +615,7 @@ mod tests {
     async fn test_orchestrator_accessor_synapse() {
         let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn Embedder> = Arc::new(crate::embedder::MockEmbedder::new());
-        let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+        let orchestrator = MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
             .await
             .expect("Failed to create orchestrator");
 
@@ -506,7 +627,7 @@ mod tests {
     async fn test_orchestrator_accessor_cortex() {
         let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn Embedder> = Arc::new(crate::embedder::MockEmbedder::new());
-        let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+        let orchestrator = MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
             .await
             .expect("Failed to create orchestrator");
 
@@ -520,7 +641,7 @@ mod tests {
     async fn test_orchestrator_lancedb_remember_and_recall() {
         let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn Embedder> = Arc::new(crate::embedder::MockEmbedder::new());
-        let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+        let orchestrator = MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
             .await
             .expect("Failed to create orchestrator");
 
@@ -546,7 +667,7 @@ mod tests {
     async fn test_orchestrator_lancedb_memorize() {
         let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn Embedder> = Arc::new(crate::embedder::MockEmbedder::new());
-        let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+        let orchestrator = MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
             .await
             .expect("Failed to create orchestrator");
 
@@ -572,7 +693,7 @@ mod tests {
     async fn test_orchestrator_lancedb_forget() {
         let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn Embedder> = Arc::new(crate::embedder::MockEmbedder::new());
-        let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+        let orchestrator = MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
             .await
             .expect("Failed to create orchestrator");
 
@@ -592,7 +713,7 @@ mod tests {
     async fn test_orchestrator_lancedb_recall_by_scope() {
         let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn Embedder> = Arc::new(crate::embedder::MockEmbedder::new());
-        let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+        let orchestrator = MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
             .await
             .expect("Failed to create orchestrator");
 
@@ -613,7 +734,7 @@ mod tests {
     async fn test_orchestrator_lancedb_end_session() {
         let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn Embedder> = Arc::new(crate::embedder::MockEmbedder::new());
-        let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+        let orchestrator = MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
             .await
             .expect("Failed to create orchestrator");
 

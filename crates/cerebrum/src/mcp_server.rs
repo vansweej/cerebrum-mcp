@@ -526,7 +526,7 @@ mod tests {
         let embedder: Arc<dyn cerebrum_core::Embedder> =
             Arc::new(cerebrum_core::embedder::MockEmbedder::new());
         let orchestrator = Arc::new(
-            MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+            MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
                 .await
                 .expect("Failed to create orchestrator"),
         );
@@ -569,7 +569,7 @@ mod tests {
         let embedder: Arc<dyn cerebrum_core::Embedder> =
             Arc::new(cerebrum_core::embedder::MockEmbedder::new());
         let orchestrator = Arc::new(
-            MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+            MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
                 .await
                 .expect("Failed to create orchestrator"),
         );
@@ -589,7 +589,7 @@ mod tests {
         let embedder: Arc<dyn cerebrum_core::Embedder> =
             Arc::new(cerebrum_core::embedder::MockEmbedder::new());
         let orchestrator = Arc::new(
-            MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+            MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
                 .await
                 .expect("Failed to create orchestrator"),
         );
@@ -605,7 +605,7 @@ mod tests {
         let embedder: Arc<dyn cerebrum_core::Embedder> =
             Arc::new(cerebrum_core::embedder::MockEmbedder::new());
         let orchestrator = Arc::new(
-            MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+            MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
                 .await
                 .expect("Failed to create orchestrator"),
         );
@@ -626,7 +626,7 @@ mod tests {
         let embedder: Arc<dyn cerebrum_core::Embedder> =
             Arc::new(cerebrum_core::embedder::MockEmbedder::new());
         let orchestrator = Arc::new(
-            MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+            MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
                 .await
                 .expect("Failed to create orchestrator"),
         );
@@ -642,7 +642,7 @@ mod tests {
         let embedder: Arc<dyn cerebrum_core::Embedder> =
             Arc::new(cerebrum_core::embedder::MockEmbedder::new());
         let orchestrator = Arc::new(
-            MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+            MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
                 .await
                 .expect("Failed to create orchestrator"),
         );
@@ -668,7 +668,7 @@ mod tests {
         let embedder: Arc<dyn cerebrum_core::Embedder> =
             Arc::new(cerebrum_core::embedder::MockEmbedder::new());
         let orchestrator = Arc::new(
-            MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+            MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
                 .await
                 .expect("Failed to create orchestrator"),
         );
@@ -693,7 +693,7 @@ mod tests {
         let embedder: Arc<dyn cerebrum_core::Embedder> =
             Arc::new(cerebrum_core::embedder::MockEmbedder::new());
         let orchestrator = Arc::new(
-            MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+            MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
                 .await
                 .expect("Failed to create orchestrator"),
         );
@@ -713,7 +713,7 @@ mod tests {
         let embedder: Arc<dyn cerebrum_core::Embedder> =
             Arc::new(cerebrum_core::embedder::MockEmbedder::new());
         let orchestrator = Arc::new(
-            MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+            MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
                 .await
                 .expect("Failed to create orchestrator"),
         );
@@ -738,7 +738,7 @@ mod tests {
         let embedder: Arc<dyn cerebrum_core::Embedder> =
             Arc::new(cerebrum_core::embedder::MockEmbedder::new());
         let orchestrator = Arc::new(
-            MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+            MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
                 .await
                 .expect("Failed to create orchestrator"),
         );
@@ -766,10 +766,10 @@ mod tests {
             tokio::runtime::Runtime::new()
                 .unwrap()
                 .block_on(MemoryOrchestrator::new(
+                    embedder,
                     dir.path(),
                     "memories",
                     384,
-                    embedder,
                 ))
                 .expect("Failed to create orchestrator"),
         );
@@ -792,7 +792,7 @@ mod tests {
         let embedder: Arc<dyn cerebrum_core::Embedder> =
             Arc::new(cerebrum_core::embedder::MockEmbedder::new());
         let orchestrator = Arc::new(
-            MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+            MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
                 .await
                 .expect("Failed to create orchestrator"),
         );
@@ -812,7 +812,7 @@ mod tests {
         let embedder: Arc<dyn cerebrum_core::Embedder> =
             Arc::new(cerebrum_core::embedder::MockEmbedder::new());
         let orchestrator = Arc::new(
-            MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+            MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
                 .await
                 .expect("Failed to create orchestrator"),
         );
@@ -833,7 +833,7 @@ mod tests {
         let embedder: Arc<dyn cerebrum_core::Embedder> =
             Arc::new(cerebrum_core::embedder::MockEmbedder::new());
         let orchestrator = Arc::new(
-            MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+            MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
                 .await
                 .expect("Failed to create orchestrator"),
         );
@@ -860,7 +860,7 @@ mod tests {
         let embedder: Arc<dyn cerebrum_core::Embedder> =
             Arc::new(cerebrum_core::embedder::MockEmbedder::new());
         let orchestrator = Arc::new(
-            MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+            MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
                 .await
                 .expect("Failed to create orchestrator"),
         );

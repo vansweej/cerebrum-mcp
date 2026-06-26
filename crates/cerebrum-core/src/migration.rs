@@ -425,7 +425,7 @@ mod tests {
     #[tokio::test]
     async fn test_reembed_migration() {
         let embedder = Arc::new(MockEmbedder::new());
-        let store = SynapseMemory::new(embedder.clone());
+        let store = SynapseMemory::new();
 
         // Add a memory
         let entry = MemoryEntry::builder(MemoryId::new(), "test content".to_string())
@@ -447,7 +447,7 @@ mod tests {
     #[tokio::test]
     async fn test_reembed_migration_dry_run() {
         let embedder = Arc::new(MockEmbedder::new());
-        let store = SynapseMemory::new(embedder.clone());
+        let store = SynapseMemory::new();
 
         // Add a memory
         let entry = MemoryEntry::builder(MemoryId::new(), "test content".to_string())
@@ -468,7 +468,7 @@ mod tests {
     #[tokio::test]
     async fn test_preserve_migration() {
         let embedder = Arc::new(MockEmbedder::new());
-        let store = SynapseMemory::new(embedder.clone());
+        let store = SynapseMemory::new();
 
         // Add a memory with embedding
         let entry = MemoryEntry::builder(MemoryId::new(), "test content".to_string())
@@ -490,7 +490,7 @@ mod tests {
     #[tokio::test]
     async fn test_hybrid_migration() {
         let embedder = Arc::new(MockEmbedder::new());
-        let store = SynapseMemory::new(embedder.clone());
+        let store = SynapseMemory::new();
 
         // Add high-salience memory
         let high_salience = MemoryEntry::builder(MemoryId::new(), "important".to_string())
@@ -532,7 +532,7 @@ mod tests {
     #[tokio::test]
     async fn test_migration_manager_execute() {
         let embedder = Arc::new(MockEmbedder::new());
-        let store = SynapseMemory::new(embedder.clone());
+        let store = SynapseMemory::new();
 
         // Add a memory
         let entry = MemoryEntry::builder(MemoryId::new(), "test".to_string())

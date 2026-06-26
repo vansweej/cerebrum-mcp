@@ -624,7 +624,6 @@ dependencies = [
  "chrono",
  "futures",
  "lancedb",
- "once_cell",
  "parking_lot",
  "reqwest 0.11.27",
  "serde",

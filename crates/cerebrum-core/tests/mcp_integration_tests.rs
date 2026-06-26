@@ -20,7 +20,7 @@ use std::sync::Arc;
 async fn create_test_orchestrator() -> (MemoryOrchestrator, tempfile::TempDir) {
     let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder::new());
     let dir = tempfile::tempdir().expect("Failed to create tempdir");
-    let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
+    let orchestrator = MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
         .await
         .expect("Failed to create orchestrator");
     (orchestrator, dir)

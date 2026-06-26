@@ -4,17 +4,16 @@ use cerebrum_core::{
     AccessBasedDecay, DecayContext, DecayStrategy, FrequencyBasedPromotion, HybridDecay,
     HybridPromotion, IdentitySummarizer, ImportanceBasedPromotion, KeywordSummarizer,
     LengthBasedSummarizer, MemoryEntry, MemoryId, MemoryScope, MemoryStore, MemoryTier,
-    MockEmbedder, PromotionContext, PromotionStrategy, RecencyBasedPromotion,
-    SentenceBasedSummarizer, Summarizer, SynapseMemory,
+    PromotionContext, PromotionStrategy, RecencyBasedPromotion, SentenceBasedSummarizer,
+    Summarizer, SynapseMemory,
 };
 use chrono::Utc;
 use std::collections::HashMap;
-use std::sync::Arc;
 
 #[tokio::test]
 async fn test_promotion_with_scope_filtering() {
     // Test that promotion respects scope boundaries
-    let synapse = SynapseMemory::new(Arc::new(MockEmbedder::new()));
+    let synapse = SynapseMemory::new();
 
     let id1 = MemoryId::new();
     let embedding = vec![0.1; 384];
@@ -36,7 +35,7 @@ async fn test_promotion_with_scope_filtering() {
 
     // User1 should only see their own memories
     let results = synapse
-        .retrieve_by_scope("important", &MemoryScope::User("user1".to_string()), 10)
+        .retrieve_by_scope(&vec![0.1; 384], &MemoryScope::User("user1".to_string()), 10)
         .await
         .unwrap();
     assert_eq!(results.len(), 1);
@@ -238,7 +237,7 @@ async fn test_memory_entry_with_all_phase5_features() {
 #[tokio::test]
 async fn test_scope_filtering_with_retrieval() {
     // Test scope filtering during retrieval
-    let synapse = SynapseMemory::new(Arc::new(MockEmbedder::new()));
+    let synapse = SynapseMemory::new();
 
     // Create memories with different scopes
     let global_id = MemoryId::new();
@@ -268,21 +267,25 @@ async fn test_scope_filtering_with_retrieval() {
 
     // Retrieve with global scope should get all
     let global_results = synapse
-        .retrieve_by_scope("memory", &MemoryScope::Global, 10)
+        .retrieve_by_scope(&vec![0.1; 384], &MemoryScope::Global, 10)
         .await
         .unwrap();
     assert_eq!(global_results.len(), 3);
 
     // Retrieve with user1 scope should get global + user1
     let user_results = synapse
-        .retrieve_by_scope("memory", &MemoryScope::User("user1".to_string()), 10)
+        .retrieve_by_scope(&vec![0.1; 384], &MemoryScope::User("user1".to_string()), 10)
         .await
         .unwrap();
     assert_eq!(user_results.len(), 2);
 
     // Retrieve with agent1 scope should get global + agent1
     let agent_results = synapse
-        .retrieve_by_scope("memory", &MemoryScope::Agent("agent1".to_string()), 10)
+        .retrieve_by_scope(
+            &vec![0.1; 384],
+            &MemoryScope::Agent("agent1".to_string()),
+            10,
+        )
         .await
         .unwrap();
     assert_eq!(agent_results.len(), 2);
@@ -415,7 +418,7 @@ async fn test_promotion_and_decay_together() {
 #[tokio::test]
 async fn test_scope_filtering_empty_results() {
     // Test scope filtering when no memories match
-    let synapse = SynapseMemory::new(Arc::new(MockEmbedder::new()));
+    let synapse = SynapseMemory::new();
 
     let id = MemoryId::new();
     let embedding = vec![0.1; 384];
@@ -428,7 +431,7 @@ async fn test_scope_filtering_empty_results() {
 
     // Query with different user scope should return empty
     let results = synapse
-        .retrieve_by_scope("memory", &MemoryScope::User("user2".to_string()), 10)
+        .retrieve_by_scope(&vec![0.1; 384], &MemoryScope::User("user2".to_string()), 10)
         .await
         .unwrap();
     assert!(results.is_empty());
