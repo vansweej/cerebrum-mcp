@@ -15,8 +15,12 @@ async fn main() -> anyhow::Result<()> {
     // Initialize embedder
     let embedder: Arc<dyn cerebrum_core::Embedder> = Arc::new(MockEmbedder::new());
 
-    // Initialize memory orchestrator
-    let orchestrator = Arc::new(MemoryOrchestrator::new("/tmp/cerebrum_cortex", embedder).await?);
+    // Initialize memory orchestrator with Config
+    let config = cerebrum_core::Config::default();
+    let orchestrator = Arc::new(
+        MemoryOrchestrator::new(&config.db_path, &config.table_name, config.embedding_dim, embedder)
+            .await?,
+    );
     let handler = CerebrumHandler::new(orchestrator);
 
     tracing::info!("Cerebrum MCP server initialized");

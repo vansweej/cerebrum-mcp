@@ -518,13 +518,15 @@ impl ServerHandler for CerebrumHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile;
 
     #[tokio::test]
     async fn test_handler_creation() {
+        let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn cerebrum_core::Embedder> =
             Arc::new(cerebrum_core::embedder::MockEmbedder::new());
         let orchestrator = Arc::new(
-            MemoryOrchestrator::new("/tmp/test_handler", embedder)
+            MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
                 .await
                 .expect("Failed to create orchestrator"),
         );
@@ -563,10 +565,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_tool() {
+        let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn cerebrum_core::Embedder> =
             Arc::new(cerebrum_core::embedder::MockEmbedder::new());
         let orchestrator = Arc::new(
-            MemoryOrchestrator::new("/tmp/test_get_tool", embedder)
+            MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
                 .await
                 .expect("Failed to create orchestrator"),
         );
@@ -582,10 +585,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_remember_missing_content() {
+        let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn cerebrum_core::Embedder> =
             Arc::new(cerebrum_core::embedder::MockEmbedder::new());
         let orchestrator = Arc::new(
-            MemoryOrchestrator::new("/tmp/test_remember_missing", embedder)
+            MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
                 .await
                 .expect("Failed to create orchestrator"),
         );
@@ -597,10 +601,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_remember_success() {
+        let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn cerebrum_core::Embedder> =
             Arc::new(cerebrum_core::embedder::MockEmbedder::new());
         let orchestrator = Arc::new(
-            MemoryOrchestrator::new("/tmp/test_remember_success", embedder)
+            MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
                 .await
                 .expect("Failed to create orchestrator"),
         );
@@ -617,10 +622,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_recall_missing_query() {
+        let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn cerebrum_core::Embedder> =
             Arc::new(cerebrum_core::embedder::MockEmbedder::new());
         let orchestrator = Arc::new(
-            MemoryOrchestrator::new("/tmp/test_recall_missing", embedder)
+            MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
                 .await
                 .expect("Failed to create orchestrator"),
         );
@@ -632,10 +638,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_recall_success() {
+        let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn cerebrum_core::Embedder> =
             Arc::new(cerebrum_core::embedder::MockEmbedder::new());
         let orchestrator = Arc::new(
-            MemoryOrchestrator::new("/tmp/test_recall_success", embedder)
+            MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
                 .await
                 .expect("Failed to create orchestrator"),
         );
@@ -657,10 +664,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_memorize_success() {
+        let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn cerebrum_core::Embedder> =
             Arc::new(cerebrum_core::embedder::MockEmbedder::new());
         let orchestrator = Arc::new(
-            MemoryOrchestrator::new("/tmp/test_memorize_success", embedder)
+            MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
                 .await
                 .expect("Failed to create orchestrator"),
         );
@@ -681,10 +689,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_memorize_invalid_id() {
+        let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn cerebrum_core::Embedder> =
             Arc::new(cerebrum_core::embedder::MockEmbedder::new());
         let orchestrator = Arc::new(
-            MemoryOrchestrator::new("/tmp/test_memorize_invalid", embedder)
+            MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
                 .await
                 .expect("Failed to create orchestrator"),
         );
@@ -700,10 +709,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_forget_success() {
+        let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn cerebrum_core::Embedder> =
             Arc::new(cerebrum_core::embedder::MockEmbedder::new());
         let orchestrator = Arc::new(
-            MemoryOrchestrator::new("/tmp/test_forget_success", embedder)
+            MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
                 .await
                 .expect("Failed to create orchestrator"),
         );
@@ -724,10 +734,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_end_session_success() {
+        let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn cerebrum_core::Embedder> =
             Arc::new(cerebrum_core::embedder::MockEmbedder::new());
         let orchestrator = Arc::new(
-            MemoryOrchestrator::new("/tmp/test_end_session_success", embedder)
+            MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
                 .await
                 .expect("Failed to create orchestrator"),
         );
@@ -748,12 +759,13 @@ mod tests {
 
     #[test]
     fn test_get_info() {
+        let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn cerebrum_core::Embedder> =
             Arc::new(cerebrum_core::embedder::MockEmbedder::new());
         let orchestrator = Arc::new(
             tokio::runtime::Runtime::new()
                 .unwrap()
-                .block_on(MemoryOrchestrator::new("/tmp/test_get_info", embedder))
+                .block_on(MemoryOrchestrator::new(dir.path(), "memories", 384, embedder))
                 .expect("Failed to create orchestrator"),
         );
         let handler = CerebrumHandler::new(orchestrator);
@@ -771,10 +783,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_recall_by_scope_missing_query() {
+        let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn cerebrum_core::Embedder> =
             Arc::new(cerebrum_core::embedder::MockEmbedder::new());
         let orchestrator = Arc::new(
-            MemoryOrchestrator::new("/tmp/test_recall_by_scope_missing", embedder)
+            MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
                 .await
                 .expect("Failed to create orchestrator"),
         );
@@ -790,10 +803,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_recall_by_scope_invalid_scope() {
+        let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn cerebrum_core::Embedder> =
             Arc::new(cerebrum_core::embedder::MockEmbedder::new());
         let orchestrator = Arc::new(
-            MemoryOrchestrator::new("/tmp/test_recall_by_scope_invalid", embedder)
+            MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
                 .await
                 .expect("Failed to create orchestrator"),
         );
@@ -810,10 +824,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_recall_by_scope_global() {
+        let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn cerebrum_core::Embedder> =
             Arc::new(cerebrum_core::embedder::MockEmbedder::new());
         let orchestrator = Arc::new(
-            MemoryOrchestrator::new("/tmp/test_recall_by_scope_global", embedder)
+            MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
                 .await
                 .expect("Failed to create orchestrator"),
         );
@@ -836,10 +851,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_tool_recall_by_scope() {
+        let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn cerebrum_core::Embedder> =
             Arc::new(cerebrum_core::embedder::MockEmbedder::new());
         let orchestrator = Arc::new(
-            MemoryOrchestrator::new("/tmp/test_get_tool_recall_by_scope", embedder)
+            MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
                 .await
                 .expect("Failed to create orchestrator"),
         );

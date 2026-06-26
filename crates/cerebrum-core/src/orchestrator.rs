@@ -5,6 +5,7 @@ use crate::models::{MemoryEntry, MemoryId, MemoryScope, MemoryTier};
 use crate::synapse::SynapseMemory;
 use crate::traits::MemoryStore;
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 
 /// Orchestrates memory operations across Synapse and Cortex tiers.
@@ -21,29 +22,19 @@ impl MemoryOrchestrator {
     /// Create a new MemoryOrchestrator with LanceDB Cortex backend.
     ///
     /// # Arguments
-    /// * `cortex_db_path` - Path to the Cortex database directory
-    /// * `embedder` - Embedder instance for generating embeddings
-    pub async fn new(cortex_db_path: &str, embedder: Arc<dyn Embedder>) -> Result<Self> {
+    /// * `db_path`    – Path to the LanceDB database directory
+    /// * `table_name` – Name of the LanceDB table
+    /// * `dim`        – Expected embedding dimension
+    /// * `embedder`   – Embedder instance for generating embeddings
+    pub async fn new(
+        db_path: &Path,
+        table_name: &str,
+        dim: usize,
+        embedder: Arc<dyn Embedder>,
+    ) -> Result<Self> {
         let synapse = Arc::new(SynapseMemory::new(embedder.clone()));
         let cortex: Arc<dyn MemoryStore> =
-            Arc::new(LanceDBCortex::new(cortex_db_path, embedder.clone()).await?);
-
-        Ok(Self {
-            synapse,
-            cortex,
-            embedder,
-        })
-    }
-
-    /// Create a new MemoryOrchestrator with LanceDB Cortex backend.
-    ///
-    /// # Arguments
-    /// * `db_path` - Path to the LanceDB database directory
-    /// * `embedder` - Embedder instance for generating embeddings
-    pub async fn with_lancedb_cortex(db_path: &str, embedder: Arc<dyn Embedder>) -> Result<Self> {
-        let synapse = Arc::new(SynapseMemory::new(embedder.clone()));
-        let cortex: Arc<dyn MemoryStore> =
-            Arc::new(LanceDBCortex::new(db_path, embedder.clone()).await?);
+            Arc::new(LanceDBCortex::new(db_path, table_name, dim, embedder.clone()).await?);
 
         Ok(Self {
             synapse,
@@ -267,11 +258,13 @@ impl MemoryOrchestrator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile;
 
     #[tokio::test]
     async fn test_orchestrator_new() {
+        let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn Embedder> = Arc::new(crate::embedder::MockEmbedder::new());
-        let orchestrator = MemoryOrchestrator::new("/tmp/test_orch", embedder)
+        let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
             .await
             .expect("Failed to create orchestrator");
 
@@ -281,8 +274,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_orchestrator_remember() {
+        let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn Embedder> = Arc::new(crate::embedder::MockEmbedder::new());
-        let orchestrator = MemoryOrchestrator::new("/tmp/test_orch", embedder)
+        let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
             .await
             .expect("Failed to create orchestrator");
 
@@ -299,8 +293,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_orchestrator_recall() {
+        let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn Embedder> = Arc::new(crate::embedder::MockEmbedder::new());
-        let orchestrator = MemoryOrchestrator::new("/tmp/test_orch", embedder)
+        let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
             .await
             .expect("Failed to create orchestrator");
 
@@ -319,8 +314,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_orchestrator_memorize() {
+        let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn Embedder> = Arc::new(crate::embedder::MockEmbedder::new());
-        let orchestrator = MemoryOrchestrator::new("/tmp/test_orch", embedder)
+        let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
             .await
             .expect("Failed to create orchestrator");
 
@@ -340,8 +336,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_orchestrator_forget() {
+        let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn Embedder> = Arc::new(crate::embedder::MockEmbedder::new());
-        let orchestrator = MemoryOrchestrator::new("/tmp/test_orch", embedder)
+        let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
             .await
             .expect("Failed to create orchestrator");
 
@@ -359,8 +356,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_orchestrator_end_session_with_promotion() {
+        let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn Embedder> = Arc::new(crate::embedder::MockEmbedder::new());
-        let orchestrator = MemoryOrchestrator::new("/tmp/test_orch", embedder)
+        let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
             .await
             .expect("Failed to create orchestrator");
 
@@ -411,8 +409,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_orchestrator_blended_recall() {
+        let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn Embedder> = Arc::new(crate::embedder::MockEmbedder::new());
-        let orchestrator = MemoryOrchestrator::new("/tmp/test_orch", embedder)
+        let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
             .await
             .expect("Failed to create orchestrator");
 
@@ -444,8 +443,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_orchestrator_recall_deduplication() {
+        let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn Embedder> = Arc::new(crate::embedder::MockEmbedder::new());
-        let orchestrator = MemoryOrchestrator::new("/tmp/test_orch", embedder)
+        let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
             .await
             .expect("Failed to create orchestrator");
 
@@ -474,31 +474,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_orchestrator_with_lancedb_cortex() {
-        let embedder: Arc<dyn Embedder> = Arc::new(crate::embedder::MockEmbedder::new());
-        let orchestrator = MemoryOrchestrator::with_lancedb_cortex("/tmp/test_lancedb", embedder)
-            .await
-            .expect("Failed to create orchestrator with LanceDB");
-
-        let _id = orchestrator
-            .remember("Test memory".to_string(), HashMap::new())
-            .await
-            .expect("Failed to remember");
-
-        assert_eq!(orchestrator.synapse_len().await.unwrap(), 1);
-
-        let results = orchestrator
-            .recall("test".to_string(), 10)
-            .await
-            .expect("Failed to recall");
-
-        assert!(!results.is_empty());
-    }
-
-    #[tokio::test]
     async fn test_orchestrator_accessor_embedder() {
+        let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn Embedder> = Arc::new(crate::embedder::MockEmbedder::new());
-        let orchestrator = MemoryOrchestrator::new("/tmp/test_orch", embedder)
+        let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
             .await
             .expect("Failed to create orchestrator");
 
@@ -513,8 +492,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_orchestrator_accessor_synapse() {
+        let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn Embedder> = Arc::new(crate::embedder::MockEmbedder::new());
-        let orchestrator = MemoryOrchestrator::new("/tmp/test_orch", embedder)
+        let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
             .await
             .expect("Failed to create orchestrator");
 
@@ -524,8 +504,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_orchestrator_accessor_cortex() {
+        let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn Embedder> = Arc::new(crate::embedder::MockEmbedder::new());
-        let orchestrator = MemoryOrchestrator::new("/tmp/test_orch", embedder)
+        let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
             .await
             .expect("Failed to create orchestrator");
 
@@ -537,8 +518,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_orchestrator_lancedb_remember_and_recall() {
+        let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn Embedder> = Arc::new(crate::embedder::MockEmbedder::new());
-        let orchestrator = MemoryOrchestrator::with_lancedb_cortex("/tmp/test_lancedb2", embedder)
+        let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
             .await
             .expect("Failed to create orchestrator");
 
@@ -562,8 +544,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_orchestrator_lancedb_memorize() {
+        let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn Embedder> = Arc::new(crate::embedder::MockEmbedder::new());
-        let orchestrator = MemoryOrchestrator::with_lancedb_cortex("/tmp/test_lancedb3", embedder)
+        let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
             .await
             .expect("Failed to create orchestrator");
 
@@ -587,8 +570,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_orchestrator_lancedb_forget() {
+        let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn Embedder> = Arc::new(crate::embedder::MockEmbedder::new());
-        let orchestrator = MemoryOrchestrator::with_lancedb_cortex("/tmp/test_lancedb4", embedder)
+        let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
             .await
             .expect("Failed to create orchestrator");
 
@@ -606,8 +590,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_orchestrator_lancedb_recall_by_scope() {
+        let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn Embedder> = Arc::new(crate::embedder::MockEmbedder::new());
-        let orchestrator = MemoryOrchestrator::with_lancedb_cortex("/tmp/test_lancedb5", embedder)
+        let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
             .await
             .expect("Failed to create orchestrator");
 
@@ -626,8 +611,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_orchestrator_lancedb_end_session() {
+        let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn Embedder> = Arc::new(crate::embedder::MockEmbedder::new());
-        let orchestrator = MemoryOrchestrator::with_lancedb_cortex("/tmp/test_lancedb6", embedder)
+        let orchestrator = MemoryOrchestrator::new(dir.path(), "memories", 384, embedder)
             .await
             .expect("Failed to create orchestrator");
 
