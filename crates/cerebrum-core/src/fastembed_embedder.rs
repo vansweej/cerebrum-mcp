@@ -450,4 +450,132 @@ mod tests {
         let avg_time = metrics.average_time_ms();
         assert!((avg_time - 150.0).abs() < 0.1); // 450/3 = 150
     }
+
+    // ============================================================================
+    // Phase 3: Wiremock HTTP Tests
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_is_available_true_against_mock() {
+        use wiremock::{
+            matchers::{method, path},
+            Mock, MockServer, ResponseTemplate,
+        };
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/tags"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&mock_server)
+            .await;
+
+        let embedder = FastEmbedEmbedder::with_endpoint(mock_server.uri());
+        assert_eq!(embedder.is_available().await, true);
+    }
+
+    #[tokio::test]
+    async fn test_is_available_false_when_unreachable() {
+        let embedder = FastEmbedEmbedder::with_endpoint("http://127.0.0.1:1".to_string());
+        assert_eq!(embedder.is_available().await, false);
+    }
+
+    #[tokio::test]
+    async fn test_embed_success_against_mock() {
+        use wiremock::{
+            matchers::{method, path},
+            Mock, MockServer, ResponseTemplate,
+        };
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/embed"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({ "embedding": vec![0.1f32; 384] })),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let embedder = FastEmbedEmbedder::with_endpoint(mock_server.uri());
+        let result = embedder.embed("hello").await;
+        assert!(result.is_ok());
+        let embedding = result.unwrap();
+        assert_eq!(embedding.len(), 384);
+        assert_eq!(embedder.metrics().successful_operations(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_embed_http_error_records_failure() {
+        use wiremock::{
+            matchers::{method, path},
+            Mock, MockServer, ResponseTemplate,
+        };
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/embed"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("server error"))
+            .mount(&mock_server)
+            .await;
+
+        let embedder = FastEmbedEmbedder::with_endpoint(mock_server.uri());
+        let result = embedder.embed("hello").await;
+        assert!(result.is_err());
+        match result {
+            Err(CerebrumError::Embedding(_)) => {}
+            _ => panic!("Expected Embedding error"),
+        }
+        assert_eq!(embedder.metrics().failed_operations(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_embed_parse_error_records_failure() {
+        use wiremock::{
+            matchers::{method, path},
+            Mock, MockServer, ResponseTemplate,
+        };
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/embed"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("not json"))
+            .mount(&mock_server)
+            .await;
+
+        let embedder = FastEmbedEmbedder::with_endpoint(mock_server.uri());
+        let result = embedder.embed("hello").await;
+        assert!(result.is_err());
+        match result {
+            Err(CerebrumError::Embedding(_)) => {}
+            _ => panic!("Expected Embedding error"),
+        }
+        assert_eq!(embedder.metrics().failed_operations(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_embed_dimension_mismatch_records_failure() {
+        use wiremock::{
+            matchers::{method, path},
+            Mock, MockServer, ResponseTemplate,
+        };
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/embed"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({ "embedding": [0.1f32, 0.2, 0.3] })),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let embedder = FastEmbedEmbedder::with_endpoint(mock_server.uri());
+        let result = embedder.embed("hello").await;
+        assert!(result.is_err());
+        match result {
+            Err(CerebrumError::Validation(_)) => {}
+            _ => panic!("Expected Validation error"),
+        }
+        assert_eq!(embedder.metrics().failed_operations(), 1);
+    }
 }
