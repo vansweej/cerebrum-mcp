@@ -1,3 +1,4 @@
+pub mod config;
 pub mod decay;
 pub mod embedder;
 pub mod error;
@@ -15,6 +16,7 @@ pub mod traits;
 pub mod utils;
 
 // Re-export commonly used types
+pub use config::Config;
 pub use decay::{
     AccessBasedDecay, DecayContext, DecayStrategy, HybridDecay, RelevanceBasedDecay, TimeBasedDecay,
 };
