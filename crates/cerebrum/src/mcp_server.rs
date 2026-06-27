@@ -3,7 +3,7 @@ use cerebrum_core::orchestrator::MemoryOrchestrator;
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::{
     Annotated, CallToolRequestParams, CallToolResult, ListToolsResult, PaginatedRequestParams,
-    RawContent, ServerInfo, Tool,
+    RawContent, ServerCapabilities, ServerInfo, Tool,
 };
 use rmcp::service::RequestContext;
 use rmcp::{ErrorData, RoleServer};
@@ -470,7 +470,9 @@ impl CerebrumHandler {
 
 impl ServerHandler for CerebrumHandler {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo::default()
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(
+            "Cerebrum two-tier memory: remember, recall, memorize, forget, end_session, recall_by_scope.",
+        )
     }
 
     #[allow(clippy::manual_async_fn)]
@@ -825,8 +827,12 @@ mod tests {
         let handler = CerebrumHandler::new(orchestrator);
 
         let info = handler.get_info();
-        // Verify get_info returns a valid ServerInfo
+        // Verify get_info returns a valid ServerInfo that advertises tools.
         assert!(!info.server_info.name.is_empty());
+        assert!(
+            info.capabilities.tools.is_some(),
+            "tools capability must be advertised"
+        );
     }
 
     #[test]
