@@ -207,7 +207,7 @@ impl CerebrumHandler {
             .ok_or("Missing required field: content")?
             .to_string();
 
-        let _salience = args.get("salience").and_then(|v| v.as_f64()).unwrap_or(0.5) as f32;
+        let salience = args.get("salience").and_then(|v| v.as_f64()).unwrap_or(0.5) as f32;
 
         // Parse optional scope (defaults to Global).
         let scope = match Self::parse_scope(args.get("scope").and_then(|v| v.as_str())) {
@@ -225,7 +225,7 @@ impl CerebrumHandler {
 
         match self
             .orchestrator
-            .remember(content.clone(), metadata, scope)
+            .remember_with_salience(content.clone(), metadata, scope, salience)
             .await
         {
             Ok(memory_id) => {
@@ -656,6 +656,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn remember_persists_caller_salience() {
+        let dir = tempfile::tempdir().unwrap();
+        let embedder: Arc<dyn cerebrum_core::Embedder> =
+            Arc::new(cerebrum_core::embedder::MockEmbedder::new());
+        let orchestrator = Arc::new(
+            MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
+                .await
+                .expect("Failed to create orchestrator"),
+        );
+        let handler = CerebrumHandler::new(orchestrator);
+
+        let store_result = handler
+            .handle_remember(Some(json!({
+                "content": "high priority note",
+                "salience": 0.9
+            })))
+            .await;
+        assert!(store_result.is_ok(), "remember should succeed");
+
+        let recall_result = handler
+            .handle_recall(Some(json!({
+                "query": "high priority note",
+                "limit": 5
+            })))
+            .await
+            .expect("recall should succeed");
+
+        let text = match &recall_result.content[0].raw {
+            RawContent::Text(t) => t.text.clone(),
+            _ => panic!("expected text content from recall"),
+        };
+        let parsed: Value = serde_json::from_str(&text).expect("recall payload should be JSON");
+        let results = parsed["results"]
+            .as_array()
+            .expect("results should be an array");
+        let entry = results
+            .iter()
+            .find(|e| e["content"] == "high priority note")
+            .expect("stored memory should be returned by recall");
+        let salience = entry["salience"]
+            .as_f64()
+            .expect("salience should be a number");
+
+        assert!(
+            (salience - 0.9).abs() < 1e-6,
+            "expected salience 0.9, got {salience}"
+        );
+    }
+
+    #[tokio::test]
     async fn test_handle_recall_missing_query() {
         let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn cerebrum_core::Embedder> =
@@ -806,6 +856,83 @@ mod tests {
             })))
             .await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn end_session_promotes_only_high_salience() {
+        let dir = tempfile::tempdir().unwrap();
+        let embedder: Arc<dyn cerebrum_core::Embedder> =
+            Arc::new(cerebrum_core::embedder::MockEmbedder::new());
+        let orchestrator = Arc::new(
+            MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
+                .await
+                .expect("Failed to create orchestrator"),
+        );
+        let handler = CerebrumHandler::new(orchestrator);
+
+        handler
+            .handle_remember(Some(json!({
+                "content": "KEEP critical fact",
+                "salience": 0.9
+            })))
+            .await
+            .expect("remember high-salience should succeed");
+        handler
+            .handle_remember(Some(json!({
+                "content": "DROP trivial note",
+                "salience": 0.1
+            })))
+            .await
+            .expect("remember low-salience should succeed");
+
+        let end_result = handler
+            .handle_end_session(Some(json!({ "promotion_threshold": 0.7 })))
+            .await;
+        assert!(end_result.is_ok(), "end_session should succeed");
+
+        // High-salience memory must survive, promoted into Cortex.
+        let keep_recall = handler
+            .handle_recall(Some(json!({ "query": "KEEP critical fact", "limit": 10 })))
+            .await
+            .expect("recall should succeed");
+        let keep_text = match &keep_recall.content[0].raw {
+            RawContent::Text(t) => t.text.clone(),
+            _ => panic!("expected text content from recall"),
+        };
+        let keep_parsed: Value =
+            serde_json::from_str(&keep_text).expect("recall payload should be JSON");
+        let keep_results = keep_parsed["results"]
+            .as_array()
+            .expect("results should be an array");
+        let kept = keep_results
+            .iter()
+            .find(|e| e["content"] == "KEEP critical fact")
+            .expect("high-salience memory should survive end_session");
+        assert_eq!(
+            kept["tier"], "Cortex",
+            "surviving memory should have been promoted to Cortex"
+        );
+
+        // Low-salience memory must be gone from all tiers.
+        let drop_recall = handler
+            .handle_recall(Some(json!({ "query": "DROP trivial note", "limit": 10 })))
+            .await
+            .expect("recall should succeed");
+        let drop_text = match &drop_recall.content[0].raw {
+            RawContent::Text(t) => t.text.clone(),
+            _ => panic!("expected text content from recall"),
+        };
+        let drop_parsed: Value =
+            serde_json::from_str(&drop_text).expect("recall payload should be JSON");
+        let drop_results = drop_parsed["results"]
+            .as_array()
+            .expect("results should be an array");
+        assert!(
+            !drop_results
+                .iter()
+                .any(|e| e["content"] == "DROP trivial note"),
+            "low-salience memory should have been dropped by end_session"
+        );
     }
 
     #[test]

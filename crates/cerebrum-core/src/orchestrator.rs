@@ -135,22 +135,16 @@ impl MemoryOrchestrator {
         Arc::clone(&self.cortex)
     }
 
-    /// Store a memory in the Synapse tier (short-term).
+    /// Store a memory in the Synapse tier with the default salience of 0.5.
     ///
-    /// # Embedding & Prefix Application
-    /// 1. Prepends `document_prefix` to the content (e.g., "search_document: ")
-    /// 2. Embeds the prefixed text via Ollama (768-dimensional vector)
-    /// 3. Stores the original (unprefixed) text in `MemoryEntry.content`
-    /// 4. Stores the embedding in `MemoryEntry.embedding`
-    ///
-    /// # Tier Assignment
-    /// - Memory is stored in **Synapse** (short-term, in-memory)
-    /// - Use `memorize()` to promote to **Cortex** (long-term, persistent)
-    /// - Use `end_session()` to auto-promote high-salience memories
+    /// This is a backwards-compatible wrapper around
+    /// [`MemoryOrchestrator::remember_with_salience`]. Existing callers that do
+    /// not care about importance scoring keep working unchanged.
     ///
     /// # Arguments
-    /// * `content` - The memory content (will be prefixed before embedding)
-    /// * `metadata` - Optional metadata key-value pairs
+    /// * `content` - The memory content (prefixed before embedding)
+    /// * `metadata` - Arbitrary key-value metadata
+    /// * `scope` - Visibility scope for the memory
     ///
     /// # Returns
     /// The ID of the stored memory
@@ -159,6 +153,31 @@ impl MemoryOrchestrator {
         content: String,
         metadata: HashMap<String, String>,
         scope: MemoryScope,
+    ) -> Result<MemoryId> {
+        self.remember_with_salience(content, metadata, scope, 0.5)
+            .await
+    }
+
+    /// Store a memory in the Synapse tier with an explicit salience score.
+    ///
+    /// Embeds the content once (with the document prefix), then stores it in the
+    /// short-term Synapse tier carrying the given salience. The salience is
+    /// clamped to `0.0..=1.0` by the entry builder.
+    ///
+    /// # Arguments
+    /// * `content` - The memory content (prefixed before embedding)
+    /// * `metadata` - Arbitrary key-value metadata
+    /// * `scope` - Visibility scope for the memory
+    /// * `salience` - Importance score (0.0–1.0); values outside the range are clamped
+    ///
+    /// # Returns
+    /// The ID of the stored memory
+    pub async fn remember_with_salience(
+        &self,
+        content: String,
+        metadata: HashMap<String, String>,
+        scope: MemoryScope,
+        salience: f32,
     ) -> Result<MemoryId> {
         let id = MemoryId::new();
 
@@ -177,6 +196,7 @@ impl MemoryOrchestrator {
 
         let mut builder = MemoryEntry::builder(id, content)
             .embedding(embedding)
+            .salience(salience)
             .tier(MemoryTier::Synapse)
             .scope(scope);
 
@@ -882,6 +902,40 @@ mod tests {
         assert!(
             beta.is_empty(),
             "different session must not see another session's memory"
+        );
+    }
+
+    #[tokio::test]
+    async fn remember_with_salience_persists_score() {
+        let dir = tempfile::tempdir().unwrap();
+        let embedder: Arc<dyn Embedder> = Arc::new(crate::embedder::MockEmbedder::new());
+        let orchestrator = MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
+            .await
+            .expect("Failed to create orchestrator");
+
+        let id = orchestrator
+            .remember_with_salience(
+                "high priority fact".to_string(),
+                HashMap::new(),
+                MemoryScope::Global,
+                0.9,
+            )
+            .await
+            .expect("remember_with_salience should succeed");
+
+        let stored = orchestrator
+            .synapse()
+            .list()
+            .await
+            .expect("synapse list should succeed")
+            .into_iter()
+            .find(|e| e.id == id)
+            .expect("stored memory should be present in synapse");
+
+        assert!(
+            (stored.salience - 0.9).abs() < f32::EPSILON,
+            "expected salience 0.9, got {}",
+            stored.salience
         );
     }
 }
