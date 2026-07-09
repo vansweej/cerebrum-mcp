@@ -1,6 +1,6 @@
 # Cerebrum Roadmap
 
-This roadmap covers work **beyond Phase 5**. Phases 1-5 deliver a fully-featured two-tier memory system with advanced features (promotion, decay, summarization, scope filtering). Phase 6 focuses on production hardening and persistence.
+This roadmap covers work **beyond Phase 5**. Phases 1-5 deliver a fully-featured two-tier memory system with scope filtering and LanceDB persistence. Phase 6 focuses on production hardening and real embeddings. **Note:** The PromotionStrategy and DecayStrategy frameworks are fully implemented and unit-tested but not yet wired into the runtime — see [docs/upgrades/](docs/upgrades/) for deferred refinements that will activate these frameworks and add automatic memory cleanup.
 
 ---
 
@@ -92,7 +92,71 @@ After Phase 6 completes production hardening, future phases may include:
 ## Guiding Principles (All Phases)
 
 1. **The agent must not see the seams.** Tiering stays an implementation detail; the tool surface should remain stable.
-2. **Every durable memory carries provenance.** Automatic decisions must be auditable and reversible.
+2. **Every durable memory carries provenance.** Automatic decisions must be auditable and reversible. *(Note: This is an aspirational goal for future phases. Currently, promotion is manual (salience-based) and decay does not occur. See [docs/upgrades/](docs/upgrades/) for planned refinements.)*
 3. **Backward compatibility.** New phases must not break existing MCP tools or agent integrations.
 4. **Production-ready quality.** All code must meet 90%+ coverage, zero clippy warnings, comprehensive tests.
 5. **Clear documentation.** Every phase includes architecture docs, ADRs, and deployment guides.
+
+---
+
+## Deferred Refinements
+
+Five refinements were deferred from Phase 6 to prioritize shipping LanceDB persistence and real embeddings. All are architecturally sound and proven by tests, but require additional coordination or depend on stabilizing other features first.
+
+See [docs/upgrades/README.md](docs/upgrades/README.md) for the full index, dependency graph, and recommended sequencing.
+
+### Refinement #1: Cortex Vector Search — Retrieve-Then-Rerank with ANN
+
+**File:** [docs/upgrades/cortex-vector-search.md](docs/upgrades/cortex-vector-search.md)
+
+Optimize Cortex retrieval from O(N) brute-force to O(log N) approximate nearest neighbors. Fetch k*multiplier candidates via LanceDB ANN index, then exact blend-rerank in Rust to preserve the 0.7*similarity + 0.3*salience blending formula.
+
+### Refinement #2: Wire Promotion Strategy — Activate the Framework
+
+**File:** [docs/upgrades/wire-promotion-strategy.md](docs/upgrades/wire-promotion-strategy.md)
+
+Replace the inline `if entry.salience >= auto_promote_threshold` check in `end_session()` with a configurable `PromotionStrategy` (default Hybrid). Requires Refinement #4 so `FrequencyBasedPromotion` can read meaningful access counts.
+
+### Refinement #3: Decay/Prune Pass — Automatic Memory Cleanup
+
+**File:** [docs/upgrades/decay-prune-pass.md](docs/upgrades/decay-prune-pass.md)
+
+Add a periodic or end-session decay pass that scores memories via a `DecayStrategy` and demotes/deletes low-scoring memories. Prevents unbounded growth. Requires Refinement #4 for `AccessBasedDecay` to work.
+
+### Refinement #4: Access Count Tracking — Shared Precursor
+
+**File:** [docs/upgrades/access-count-tracking.md](docs/upgrades/access-count-tracking.md)
+
+Increment `access_count` in memory metadata on each `recall()` hit, persisted via merge_insert. Unblocks both Refinements #2 and #3 by providing meaningful data for frequency-based and access-based strategies.
+
+### Refinement #5: Shared LanceDB Crate — Cross-Project Reuse
+
+**File:** [docs/upgrades/shared-lancedb-crate.md](docs/upgrades/shared-lancedb-crate.md)
+
+Extract a generic `VectorStore<R>` crate from Cerebrum and Athenaeum's near-identical LanceDB implementations. Requires Refinement #1 to stabilize the retrieval path (retrieve-then-rerank with ANN).
+
+### Dependency Graph
+
+```
+Refinement #1 (Cortex Vector Search)
+  └─> Refinement #5 (Shared LanceDB Crate)
+
+Refinement #4 (Access Count Tracking)
+  ├─> Refinement #2 (Wire Promotion Strategy)
+  └─> Refinement #3 (Decay/Prune Pass)
+```
+
+### Recommended Sequencing
+
+**Phase A (Independent):**
+- Refinement #1 — Optimize retrieval with ANN indexes.
+- Refinement #4 — Increment access count on recall.
+
+**Phase B (Depends on Phase A):**
+- Refinement #2 — Activate PromotionStrategy (requires #4).
+- Refinement #3 — Activate DecayStrategy (requires #4).
+
+**Phase C (Depends on Phase A):**
+- Refinement #5 — Extract shared crate (requires #1).
+
+For more details, see [docs/concepts/llm-memory.md](docs/concepts/llm-memory.md) for the full glossary and maturity note explaining why these frameworks are currently dormant.
