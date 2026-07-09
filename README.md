@@ -83,15 +83,15 @@ A two-tier agent memory subsystem implemented as a single Model Context Protocol
 
 ### Runtime Dependencies
 
-**Ollama is a hard dependency** for production deployments. The system requires:
+**Ollama is a lazy dependency** for production deployments. The system initializes without contacting Ollama:
 
-- **Ollama Server:** Running at `http://localhost:11434` (configurable via `Config.ollama_url`)
+- **Ollama Server:** Contacted on first `remember()` or `recall()` call at `http://localhost:11434` (configurable via `Config.ollama_url`)
 - **Embedding Model:** `nomic-embed-text` must be pulled: `ollama pull nomic-embed-text`
 - **Embedding Dimension:** 768-dimensional vectors (nomic-embed-text standard)
 - **Connection Timeout:** 5 seconds (configurable via `Config.embed_connect_timeout`)
 - **Request Timeout:** 60 seconds (configurable via `Config.embed_timeout`)
 
-If Ollama is unavailable at startup, `MemoryOrchestrator::from_config()` will fail with a descriptive error message. The warmup probe validates the Ollama connection and embedding dimension before any memory operations begin.
+`MemoryOrchestrator::from_config()` completes instantly without network I/O. Ollama errors are deferred to the first embedding request and returned gracefully to the caller (no panic or hang). This lazy startup pattern avoids blocking the MCP stdio handshake during cold-start (e.g., when Ollama is warming up a model).
 
 ### Semantic Search Prefixes
 
@@ -367,8 +367,8 @@ Then configure your MCP client (e.g., Claude Desktop) to use the `cerebrum` bina
 
 ### Runtime Requirements
 
-- **No external services:** The binary uses `MockEmbedder` (hash-based, offline)
-- **No model files:** Embeddings are deterministic and don't require model downloads
+- **Ollama Server:** Required at runtime; contacted lazily on first `remember()` or `recall()` call
+- **Embedding Model:** `nomic-embed-text` must be pulled: `ollama pull nomic-embed-text`
 - **Writable data directory:** The wrapper ensures data persists to `$XDG_DATA_HOME/cerebrum`
 
 ### Build Dependencies
