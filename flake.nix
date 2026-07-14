@@ -27,7 +27,7 @@
           cargoLock.lockFile = ./Cargo.lock;
 
           nativeBuildInputs = with pkgs; [ pkg-config protobuf ];
-          buildInputs = with pkgs; [ openssl ];
+          buildInputs = with pkgs; [ ];
 
           cargoBuildFlags = [ "-p" "cerebrum" ];
           doCheck = false;
