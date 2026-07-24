@@ -1,283 +1,239 @@
-# Feature: Semantic Two-Tier Agent Memory (Ollama + LanceDB)
+# Feature: Provenance metadata on stored memories
 
 ## Overview
-Implement real semantic memory for cerebrum-mcp: short-term RAM-based Synapse (session-scoped), long-term LanceDB-based Cortex (persistent), both searchable via Ollama nomic-embed-text (768-dim) embeddings. Embedder lives only on the orchestrator; stores operate on precomputed query vectors. One embed per operation (remember/recall). Ollama is a hard dependency.
+Add structured provenance metadata to every stored memory and use it at recall time to keep cross-session, cross-repo context clean. Four tags — `project` (multi-valued JSON array), `type`, `status`, `confidence` — all live inside the existing `metadata_json` blob (no new Arrow column, no DB migration). Recall deprioritizes (never excludes) memories via score multipliers for `status` and optional `project` affinity, falling back to the `CEREBRUM_PROJECT` env default when no explicit `prefer_project` is supplied. This is Plan 1 (cerebrum-mcp capability); Plan 2 (agora agent wiring) follows separately and is out of scope here.
 
-## Phase 1: Flip MemoryStore Trait to Vector Seam
+## Phase 1: Provenance vocabulary and weighting primitives
 
-Commit message: `refactor: centralize embedding in orchestrator, stores take precomputed vectors`
+Commit message: `feat: add provenance metadata module with status and project weighting`
 
-### Step 1: Update MemoryStore trait signature
-- Change `remember(&mut self, entry: MemoryEntry) -> Result<()>` to `remember(&mut self, entry: MemoryEntry, embedding: &[f32]) -> Result<()>`.
-- Change `recall(&self, query: &str, limit: usize) -> Result<Vec<MemoryEntry>>` to `recall(&self, query_vector: &[f32], limit: usize) -> Result<Vec<MemoryEntry>>`.
-- Change `recall_by_scope(&self, scope: &str, query: &str, limit: usize) -> Result<Vec<MemoryEntry>>` to `recall_by_scope(&self, scope: &str, query_vector: &[f32], limit: usize) -> Result<Vec<MemoryEntry>>`.
-- Change `promote(&mut self, entry_id: &str) -> Result<()>` to `promote(&mut self, entry_id: &str, embedding: &[f32]) -> Result<()>`.
-- Remove any embedder field or embedding logic from trait definition.
+### Step 1: Create the provenance module
 
-### Step 2: Refactor SynapseMemory
-- Remove `embedder: Arc<dyn Embedder>` field.
-- Update `remember()` to accept `embedding: &[f32]` parameter; store it in `MemoryEntry.embedding`.
-- Update `recall()` to accept `query_vector: &[f32]`; use it directly for similarity search (no embedding step).
-- Update `recall_by_scope()` similarly.
-- Update `promote()` to accept `embedding: &[f32]`; use it when updating the entry.
-- Keep the `0.7*sim + 0.3*salience` blend logic intact.
-- Update constructor: `pub fn new() -> Self` (no embedder parameter).
+Create a new file `crates/cerebrum-core/src/provenance.rs`.
 
-### Step 3: Refactor LanceDBCortex
-- Remove `embedder: Arc<dyn Embedder>` field.
-- Remove the dimension guard that checked `embedder.dim() == config.embedding_dim` (this will be validated in orchestrator warmup).
-- Update `remember()` to accept `embedding: &[f32]` parameter; store it in `MemoryEntry.embedding`.
-- Update `recall()` to accept `query_vector: &[f32]`; use it directly for LanceDB vector search.
-- Update `recall_by_scope()` similarly.
-- Update `promote()` to accept `embedding: &[f32]`.
-- Update constructor: `pub fn new(path: &Path, table_name: &str, embedding_dim: usize) -> Result<Self>` (no embedder parameter).
+Define the metadata-key constants and pure helper functions used to tag and rank memories. All four provenance tags live inside the existing `MemoryEntry.metadata` (`HashMap<String, String>`); this module never adds database columns.
 
-### Step 4: Update MemoryOrchestrator (partial)
-- Add `embedder: Arc<dyn Embedder>` field to orchestrator.
-- Update `remember()` to:
-  1. Embed the document text using `self.embedder.embed(&text)`.
-  2. Call `self.synapse.remember(entry.clone(), &embedding)`.
-  3. Call `self.cortex.remember(entry, &embedding)`.
-- Update `recall()` to:
-  1. Embed the query text using `self.embedder.embed(&query)`.
-  2. Call `self.synapse.recall(&embedding, limit)`.
-  3. Call `self.cortex.recall(&embedding, limit)`.
-  4. Merge and deduplicate results.
-- Update `recall_by_scope()` similarly.
-- Update `promote()` to:
-  1. Retrieve the entry from one of the stores.
-  2. Use its stored `embedding` field (or re-embed if not present).
-  3. Call both stores' `promote()` with the vector.
-- Keep constructor as-is for now (will be replaced in Phase 4).
+Add, with a `//!` module doc comment and `///` doc comments on every public item:
 
-### Step 5: Update all call sites
-- In `main.rs`: update any direct calls to `synapse.remember()`, `cortex.remember()`, etc. to pass dummy vectors (e.g., `&[]`) for now (will be fixed in Phase 4).
-- In tests: update mock calls to pass vectors.
-- Verify no compilation errors; all tests should still pass (using MockEmbedder at 384 dims for now).
+- `use std::collections::HashMap;`
+- `pub const KEY_PROJECT: &str = "project";`
+- `pub const KEY_TYPE: &str = "type";`
+- `pub const KEY_STATUS: &str = "status";`
+- `pub const KEY_CONFIDENCE: &str = "confidence";`
+- `pub fn project_array_json(projects: &[String]) -> String` — return a JSON array string of the de-duplicated, order-preserving, non-empty entries (trim each; drop empties). An empty input returns `"[]"`. Use `serde_json`.
+- `pub fn parse_project_array(value: &str) -> Vec<String>` — parse `value` as a JSON array of strings; if JSON parsing fails, return a single-element vec containing the trimmed `value` (unless it is empty, then an empty vec). This makes the function robust to hand-written tags.
+- `pub fn status_weight(metadata: &HashMap<String, String>) -> f32` — look up `KEY_STATUS`, trim + lowercase it, then return `0.4` for `"parked"`, `0.3` for `"done"`, and `1.0` for everything else including `"active"`, unknown values, and a missing key. Add `const PARKED_WEIGHT: f32 = 0.4;` and `const DONE_WEIGHT: f32 = 0.3;` above the function.
+- `pub fn project_weight(metadata: &HashMap<String, String>, prefer_project: Option<&str>) -> f32` — return `1.0` when `prefer_project` is `None`. Otherwise parse `metadata.get(KEY_PROJECT)` with `parse_project_array`; return `1.0` when the parsed list is empty (untagged / back-catalogue stays neutral) OR contains the `prefer_project` value (case-sensitive exact match); otherwise return `NON_MEMBER_WEIGHT`. Add `const NON_MEMBER_WEIGHT: f32 = 0.7;` above the function. Never return 0.0 — this is a deprioritization, never an exclusion.
 
-### Verification
-- `cargo fmt && cargo clippy -D warnings && cargo test --workspace` — all green.
-- No live Ollama required yet; MockEmbedder still in use.
+Add a `#[cfg(test)] mod tests` covering: status weights for parked/done/active/unknown/missing; project weight for None-prefer, member, non-member, and untagged-memory cases; and `parse_project_array` for a JSON array input, a bare non-JSON string input, and an empty string.
 
----
+### Step 2: Register the provenance module and re-exports
 
-## Phase 2: Add Ollama Configuration
+Edit `crates/cerebrum-core/src/lib.rs`. Add `pub mod provenance;` alongside the other `pub mod` declarations. Following the existing re-export style already present in that file, also re-export the provenance key constants and the two weight functions (`status_weight`, `project_weight`) at the crate root so other crates can reference them as `cerebrum_core::status_weight` etc. Do not remove or reorder existing exports.
 
-Commit message: `feat: add Ollama config (url, model, prefixes, dim 768)`
+### Step 3: Add the ScoredMemory type
 
-### Step 1: Extend Config struct
-- Add `ollama_url: String` (default: `"http://localhost:11434"`).
-- Add `embed_model: String` (default: `"nomic-embed-text"`).
-- Add `embedding_dim: usize` (change from 384 to `768`).
-- Add `query_prefix: String` (default: `"search_query: "`).
-- Add `document_prefix: String` (default: `"search_document: "`).
-- Add `ollama_timeout_secs: u64` (default: `30`).
-- Add `ollama_warmup_timeout_secs: u64` (default: `60`).
+Edit `crates/cerebrum-core/src/models.rs`. Add a new public struct near the `MemoryEntry` definition:
 
-### Step 2: Update Config deserialization
-- Ensure all new fields have sensible defaults.
-- Add validation: `embedding_dim` must be > 0.
+```rust
+/// A memory paired with its blended-and-weighted rank score.
+///
+/// Carries the store-computed score (`sim*0.7 + salience*0.3`, multiplied by
+/// the provenance status and project weights) across the tier boundary so the
+/// orchestrator can merge results from both tiers by a single comparable score
+/// instead of re-ranking by salience alone.
+#[derive(Debug, Clone)]
+pub struct ScoredMemory {
+    /// The underlying memory entry.
+    pub entry: MemoryEntry,
+    /// Blended similarity/salience score after provenance weighting.
+    pub score: f32,
+}
+```
 
-### Step 3: Update MemoryEntry
-- Verify `embedding: Option<Vec<f32>>` field exists (it should already).
-- No changes needed; this field will hold 768-dim vectors going forward.
+Keep all existing items in the file unchanged.
 
-### Step 4: Update test fixtures
-- Update any hardcoded `embedding_dim: 384` to `768` in tests.
-- Update MockEmbedder to emit 384-dim vectors (test-only; production will use real Ollama at 768).
+## Phase 2: Score-carrying retrieval across both tiers
 
-### Verification
-- `cargo fmt && cargo clippy -D warnings && cargo test --workspace` — all green.
-- Config can be serialized/deserialized with new fields.
+Commit message: `refactor: carry provenance-weighted scores out of memory stores`
 
----
+### Step 1: Add scored retrieval methods to the MemoryStore trait
 
-## Phase 3: Fix FastEmbedEmbedder API
+Edit `crates/cerebrum-core/src/traits.rs`.
 
-Commit message: `fix: correct FastEmbedEmbedder to use batch /api/embed endpoint`
+Import `ScoredMemory` from the models module (the trait already imports `MemoryEntry, MemoryId, MemoryScope` — add `ScoredMemory` to that import).
 
-### Step 1: Fix request/response shape
-- Change request from `{model, prompt}` to `{model, input: [text]}` (batch format).
-- Change response parsing from `{embedding: [...]}` to `{embeddings: [[...]]}` (batch format).
-- Extract the first embedding from the batch: `embeddings[0]`.
+Add two new REQUIRED methods to the `MemoryStore` trait, each with a `///` doc comment:
 
-### Step 2: Add per-instance HTTP client
-- Add `client: reqwest::Client` field to `FastEmbedEmbedder`.
-- Initialize it in `new()` with sensible timeouts (use `config.ollama_timeout_secs`).
+```rust
+async fn retrieve_scored(
+    &self,
+    query_vec: &[f32],
+    limit: usize,
+    prefer_project: Option<&str>,
+) -> Result<Vec<ScoredMemory>>;
 
-### Step 3: Add configurable dimension
-- Add `dim: usize` field to `FastEmbedEmbedder`.
-- Update `new()` to accept `dim: usize` parameter.
-- Update `dim()` method to return `self.dim`.
+async fn retrieve_by_scope_scored(
+    &self,
+    query_vec: &[f32],
+    scope: &MemoryScope,
+    limit: usize,
+    prefer_project: Option<&str>,
+) -> Result<Vec<ScoredMemory>>;
+```
 
-### Step 4: Update tests
-- Fix mock responses to use batch shape: `{embeddings: [[0.1f32; 384]]}`.
-- Add test for correct request shape: `{model: "nomic-embed-text", input: ["test"]}`.
+Convert the existing `retrieve` and `retrieve_by_scope` methods into DEFAULT methods (provide a body in the trait) that delegate to the scored variants with `prefer_project = None` and strip the score:
 
-### Verification
-- `cargo fmt && cargo clippy -D warnings && cargo test --workspace` — all green.
-- Tests pass with mocked batch responses.
+```rust
+async fn retrieve(&self, query_vec: &[f32], limit: usize) -> Result<Vec<MemoryEntry>> {
+    Ok(self
+        .retrieve_scored(query_vec, limit, None)
+        .await?
+        .into_iter()
+        .map(|s| s.entry)
+        .collect())
+}
+```
 
----
+and the analogous default for `retrieve_by_scope`. Update the doc comments to note these are convenience wrappers over the scored variants.
 
-## Phase 4: Wire Ollama via from_config with Warmup Probe
+In the `#[cfg(test)] mod tests` `DefaultStore` impl in the same file, replace its `retrieve` / `retrieve_by_scope` implementations with `retrieve_scored` (return the two fixed entries each wrapped in `ScoredMemory { entry, score: 1.0 }`) and `retrieve_by_scope_scored` (return an empty vec), matching the previous returned data. Keep the existing `store`/`delete`/`list`/`len`/`is_empty` impls and the three test functions unchanged.
 
-Commit message: `feat: add MemoryOrchestrator::from_config with Ollama warmup probe and prefixes`
+### Step 2: Apply provenance weighting inside the Synapse store
 
-### Step 1: Implement from_config constructor
-- Create `pub async fn from_config(config: &Config) -> Result<Self>`.
-- Instantiate `FastEmbedEmbedder::new(config.ollama_url.clone(), config.embed_model.clone(), config.embedding_dim)`.
-- Instantiate `SynapseMemory::new()`.
-- Instantiate `LanceDBCortex::new(&data_dir, "memories", config.embedding_dim)`.
-- Return `MemoryOrchestrator { embedder, synapse, cortex }`.
+Edit `crates/cerebrum-core/src/synapse.rs`.
 
-### Step 2: Add warmup probe
-- In `from_config`, after instantiating the embedder, call a warmup probe:
-  1. Embed a test string: `"test"`.
-  2. Verify the returned vector has length `config.embedding_dim` (should be 768).
-  3. If mismatch or error, return `Err` with descriptive message.
-  4. This pre-loads the Ollama model and validates configuration.
+Replace the `MemoryStore::retrieve` and `MemoryStore::retrieve_by_scope` implementations with `retrieve_scored` and `retrieve_by_scope_scored` carrying the new signatures (add `limit`/`scope` as before, plus `prefer_project: Option<&str>`). Reuse the existing scan logic; where the code currently computes `let score = (similarity * 0.7) + (entry.salience * 0.3);`, multiply that by the provenance weights:
 
-### Step 3: Apply prefixes in orchestrator methods
-- In `remember()`: prepend `config.document_prefix` to the document text before embedding.
-  - Example: `let prefixed = format!("{}{}", config.document_prefix, text);`
-  - Embed `prefixed`, not `text`.
-- In `recall()`: prepend `config.query_prefix` to the query text before embedding.
-  - Example: `let prefixed = format!("{}{}", config.query_prefix, query);`
-  - Embed `prefixed`, not `query`.
-- In `recall_by_scope()`: apply query prefix similarly.
-- Store the original (unprefixed) text in `MemoryEntry.text`.
+```rust
+let base = (similarity * 0.7) + (entry.salience * 0.3);
+let score = base
+    * crate::provenance::status_weight(&entry.metadata)
+    * crate::provenance::project_weight(&entry.metadata, prefer_project);
+```
 
-### Step 4: Update MemoryOrchestrator constructor
-- Keep the old `new()` constructor for backward compatibility (used in tests with MockEmbedder).
-- Make `from_config()` the primary production path.
+Collect `crate::models::ScoredMemory { entry: entry.clone(), score }`, sort by `score` descending, take `limit`, and return `Vec<ScoredMemory>`. Keep the `retrieve_by_scope_scored` scope filter (`entry.scope.matches(scope)`) unchanged. Import `ScoredMemory` as needed. Do NOT re-add the old `retrieve`/`retrieve_by_scope` methods — they now come from the trait defaults. Leave the inherent `list`/`len`/`is_empty`/`clear`/`cosine_similarity` methods and all existing tests unchanged; the tests call `retrieve(&vec, n)` and must still compile and pass via the trait default.
 
-### Verification
-- `cargo fmt && cargo clippy -D warnings && cargo test --workspace` — all green.
-- Warmup probe validates Ollama connection and dimension.
-- Prefixes are applied correctly (can be verified in logs or by inspecting embedded text in tests).
+### Step 3: Apply provenance weighting inside the LanceDB Cortex store
 
----
+Edit `crates/cerebrum-core/src/lancedb_cortex.rs`.
 
-## Phase 5: Switch main.rs to from_config and Add E2E Test
+Replace the `MemoryStore::retrieve` and `MemoryStore::retrieve_by_scope` implementations with `retrieve_scored` and `retrieve_by_scope_scored` carrying the new signatures (add `prefer_project: Option<&str>`). Keep the existing table scan, the empty-table early return, and the scope SQL pushdown in `retrieve_by_scope_scored` unchanged. Where the code currently computes `let score = sim * 0.7 + record.salience * 0.3;`, first convert the record to an entry (in `retrieve_scored`, call `record.to_entry()?`; in `retrieve_by_scope_scored`, the entry is already produced by the existing `record.to_entry().ok()?` step), then:
 
-Commit message: `feat: switch main.rs to MemoryOrchestrator::from_config, add wiremock E2E test`
+```rust
+let base = sim * 0.7 + entry.salience * 0.3;
+let score = base
+    * crate::provenance::status_weight(&entry.metadata)
+    * crate::provenance::project_weight(&entry.metadata, prefer_project);
+```
 
-### Step 1: Update main.rs
-- Replace `MemoryOrchestrator::new()` with `MemoryOrchestrator::from_config(&Config::default()).await?`.
-- Ensure error handling is in place (from_config is async and can fail).
-- Log the warmup probe result (e.g., "Ollama warmup successful, embedding_dim=768").
+Return `Vec<crate::models::ScoredMemory>` built as `ScoredMemory { entry, score }`, sorted by `score` descending and truncated to `limit`. Import `ScoredMemory`. Do NOT re-add the old `retrieve`/`retrieve_by_scope` methods — they come from the trait defaults. Leave `store`, `delete`, `list`, `len`, `is_empty`, `search_by_salience`, the `schema()` function, `LanceDBMemoryRecord`, and all existing tests unchanged; existing tests call `retrieve(&qvec(), n)` and must pass via the trait default.
 
-### Step 2: Create end-to-end test with wiremock
-- Create `crates/cerebrum-core/tests/ollama_integration_tests.rs`.
-- Use `wiremock` to mock Ollama `/api/embed` endpoint.
-- Test scenario:
-  1. Mock Ollama to return 768-dim vectors.
-  2. Call `MemoryOrchestrator::from_config()` with mocked Ollama URL.
-  3. Verify warmup probe succeeds.
-  4. Call `remember()` with a document; verify it's stored in both Synapse and Cortex.
-  5. Call `recall()` with a query; verify results are returned from both stores.
-  6. Verify prefixes were applied (by inspecting the request body sent to mocked Ollama).
-  7. Verify Synapse is offline (no Ollama call for Synapse-only recall).
+## Phase 3: Merge tiers by carried score in the orchestrator
 
-### Step 3: Ensure test data cleanup
-- Use temporary directories for LanceDB in tests (not `~/.local/share/cerebrum`).
-- Clean up after each test.
+Commit message: `feat: rank recall by carried provenance score and add prefer_project`
 
-### Verification
-- `cargo fmt && cargo clippy -D warnings && cargo test --workspace` — all green.
-- E2E test passes without live Ollama (wiremock only).
-- `cargo test -- --ignored` (if any ignored tests exist) can be run against live Ollama for 768-dim validation.
+### Step 1: Add project-aware recall methods to the orchestrator
 
----
+Edit `crates/cerebrum-core/src/orchestrator.rs`.
 
-## Phase 6: Documentation
+Add two new public async methods and make the existing `recall` and `recall_by_scope` delegate to them (mirroring the existing `remember` / `remember_with_salience` wrapper idiom already in this file):
 
-Commit message: `docs: add Ollama runtime dependency, prefixes, schema-wipe caveat`
+```rust
+pub async fn recall(&self, query: String, limit: usize) -> Result<Vec<MemoryEntry>> {
+    self.recall_with_project(query, limit, None).await
+}
 
-### Step 1: Update README.md
-- Add section: "Runtime Dependencies"
-  - Ollama must be running at `http://localhost:11434` (configurable via `Config.ollama_url`).
-  - Model `nomic-embed-text` must be pulled: `ollama pull nomic-embed-text`.
-  - Embedding dimension is 768; older schemas (384-dim) are incompatible.
-- Add section: "Semantic Search Prefixes"
-  - Explain `search_query:` and `search_document:` prefixes (nomic best practice).
-  - Configurable via `Config.query_prefix` and `document_prefix`.
-- Add section: "Schema Migration"
-  - Warn that changing `embedding_dim` requires wiping `~/.local/share/cerebrum/data/cerebrum/memories.lance`.
-  - Provide command: `rm -rf ~/.local/share/cerebrum/data/cerebrum/`.
+pub async fn recall_with_project(
+    &self,
+    query: String,
+    limit: usize,
+    prefer_project: Option<&str>,
+) -> Result<Vec<MemoryEntry>> { ... }
+```
 
-### Step 2: Update CONTEXT.md or architecture docs (if present)
-- Document the two-tier memory architecture: Synapse (RAM, fast, session-scoped) + Cortex (LanceDB, persistent, semantic).
-- Explain the embedder seam: orchestrator embeds once per operation, stores take vectors.
-- Explain the warmup probe: validates Ollama connection and dimension at startup.
+and analogously `recall_by_scope(query, scope, limit)` delegating to `recall_by_scope_with_project(query, scope, limit, prefer_project)`.
 
-### Step 3: Add inline code comments
-- In `orchestrator.rs`: document the prefix application and warmup probe.
-- In `fastembed_embedder.rs`: document the batch API shape.
-- In `synapse.rs` and `lancedb_cortex.rs`: document that they accept precomputed vectors.
+In each `_with_project` body: embed the query once with `self.query_prefix` (unchanged), call `retrieve_scored` (or `retrieve_by_scope_scored`) on both `self.synapse` and `self.cortex` passing `limit` and `prefer_project`, extend both `Vec<ScoredMemory>` into one vector, sort it by `score` descending (`partial_cmp`, `unwrap_or(Ordering::Equal)`), then dedup by `entry.id` keeping the first (now-highest-scored) occurrence using a `HashSet<MemoryId>`, take `limit`, and map to `entry`. This replaces the previous salience-only sort. Import `ScoredMemory` from `crate::models`. Update the `recall` doc comment paragraph that currently says "Ranks by salience (descending)" to describe score-based ranking with provenance weighting. Leave `remember`, `memorize`, `forget`, `end_session`, and the accessors unchanged. Existing tests call `recall`/`recall_by_scope` with the old two/three-argument signatures and must still compile and pass.
 
-### Verification
-- README is clear and complete.
-- All new features are documented.
-- No typos or broken links.
+## Phase 4: Ingest provenance tags via the remember tool
 
----
+Commit message: `feat: accept provenance tags and env-default project on remember`
 
-## Post-Implementation Checklist
+Coverage: skip
 
-After all phases are complete:
+### Step 1: Add an env-default project field to the handler
 
-1. **Wipe old schema:**
-   ```bash
-   rm -rf ~/.local/share/cerebrum/data/cerebrum/
-   ```
+Edit `crates/cerebrum/src/mcp_server.rs` and `crates/cerebrum/src/main.rs`.
 
-2. **Verify build:**
-   ```bash
-   nix develop . --command cargo fmt && cargo clippy -D warnings && cargo test --workspace
-   ```
+In `mcp_server.rs`, add a field `default_project: Vec<String>` to the `CerebrumHandler` struct. Keep the existing `pub fn new(orchestrator: Arc<MemoryOrchestrator>) -> Self` constructor working by defaulting `default_project` to an empty `Vec` (so all existing tests that call `CerebrumHandler::new(...)` are unaffected). Add a second constructor `pub fn with_default_project(orchestrator: Arc<MemoryOrchestrator>, default_project: Vec<String>) -> Self` with a `///` doc comment.
 
-3. **Test with live Ollama (optional):**
-   ```bash
-   # Ensure Ollama is running and nomic-embed-text is pulled
-   ollama pull nomic-embed-text
-   nix develop . --command cargo test -- --ignored
-   ```
+In `main.rs`, read the `CEREBRUM_PROJECT` environment variable (`std::env::var("CEREBRUM_PROJECT")`), split it on commas into a `Vec<String>` of trimmed non-empty entries (empty/unset → empty vec), and construct the handler via `CerebrumHandler::with_default_project(orchestrator, projects)` instead of `CerebrumHandler::new(orchestrator)`.
 
-4. **Build release:**
-   ```bash
-   nix develop . --command cargo build --release
-   ```
+### Step 2: Extend the remember tool schema with provenance fields
 
-5. **Commit strategy:**
-   - One commit per phase (6 commits total).
-   - Use conventional commit messages as specified above.
-   - Do not push; user will integrate into home-manager.
+Edit `crates/cerebrum/src/mcp_server.rs`, function `remember_tool()`. Add four optional properties to the JSON schema, alongside the existing `content`, `salience`, `scope`:
 
-6. **Verification points:**
-   - Phase 1: Stores take vectors; orchestrator embeds; all tests pass.
-   - Phase 2: Config has Ollama fields; dim is 768.
-   - Phase 3: FastEmbedEmbedder uses batch API; tests pass.
-   - Phase 4: from_config works; warmup probe validates; prefixes applied.
-   - Phase 5: main.rs uses from_config; E2E test passes.
-   - Phase 6: Docs complete; no typos.
+- `type`: string — "Provenance type. Recommended (not enforced): decision, finding, idea, done, plan, gotcha, convention, context."
+- `status`: string — "Lifecycle status. Recommended: active, parked, done. Defaults to 'active'."
+- `confidence`: string — "Optional confidence: proposed, confirmed, verified."
+- `project`: "Project tag(s): a string or an array of strings. Merged with the server's CEREBRUM_PROJECT default." Express this in JSON schema as `"oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}]`.
 
----
+Keep `"required": ["content"]`. Do not change other tool definitions in this step.
 
-## Key Design Decisions (Locked)
+### Step 3: Populate provenance metadata in handle_remember
 
-- **Embedder seam:** Embedder lives only on `MemoryOrchestrator`. Both `SynapseMemory` and `LanceDBCortex` take precomputed `&[f32]` vectors.
-- **One embed per operation:** `remember()` embeds document once; `recall()` embeds query once; both fan vector to Synapse and Cortex.
-- **Prefixes:** `search_query: ` and `search_document: ` applied in orchestrator before embedding (nomic best practice).
-- **Warmup probe:** Validates Ollama connection and dimension at startup; pre-loads model to avoid cold-start hang.
-- **Ollama mandatory:** No fallback to MockEmbedder in production; fail-fast on connection/model errors.
-- **Dimension:** 768 (nomic-embed-text truth); old 384-dim schemas must be wiped.
-- **Synapse offline:** No Ollama calls for Synapse-only recall; fast, session-scoped.
-- **Cortex persistent:** LanceDB stores vectors; survives session restart; semantically searchable.
+Edit `crates/cerebrum/src/mcp_server.rs`, function `handle_remember`. Replace the line `let metadata = HashMap::new();` with construction of a populated `HashMap<String, String>` using the provenance key constants from `cerebrum_core::provenance`:
 
----
+- `status`: read `args["status"]` as a string, trim + lowercase; if absent use `"active"`. Insert under `provenance::KEY_STATUS`.
+- `type`: if `args["type"]` is a present string, trim + lowercase and insert under `provenance::KEY_TYPE`. Omit the key when absent.
+- `confidence`: same handling as `type`, under `provenance::KEY_CONFIDENCE`.
+- `project`: collect provided project values — accept either a JSON string (one value) or a JSON array of strings from `args["project"]`. Build a `Vec<String>` = `self.default_project` followed by the provided values, trimmed and de-duplicated preserving order. If the resulting vec is non-empty, insert `provenance::project_array_json(&vec)` under `provenance::KEY_PROJECT`; if empty, omit the key.
 
-## Reference Implementation
+Pass this populated metadata map into the existing `remember_with_salience(content, metadata, scope, salience)` call. Keep the rest of the function (content/salience/scope parsing, success/error responses) unchanged. Ensure `use std::collections::HashMap;` remains.
 
-See `/Users/Shared/PhilipsDev/athenaeum-mcp/crates/core/src/{embed.rs, engine.rs, store.rs}` for seam shape and patterns. Cerebrum's two-tier memory is different (Synapse + Cortex vs. athenaeum's flat passage library), but the embedder seam and orchestrator wiring follow the same design.
+## Phase 5: Surface provenance on recall
+
+Commit message: `feat: add prefer_project recall arg and return metadata in results`
+
+Coverage: skip
+
+### Step 1: Add prefer_project to the recall tool schemas
+
+Edit `crates/cerebrum/src/mcp_server.rs`, functions `recall_tool()` and `recall_by_scope_tool()`. Add one optional property `prefer_project` (string) to each schema with the description: "Optional project name to gently boost matching memories in ranking (never excludes others). Defaults to the server's CEREBRUM_PROJECT." Do not change the existing required fields.
+
+### Step 2: Thread prefer_project through the recall handlers
+
+Edit `crates/cerebrum/src/mcp_server.rs`, functions `handle_recall` and `handle_recall_by_scope`. In each, resolve the preferred project: read `args["prefer_project"]` as a trimmed string if present; otherwise fall back to the first element of `self.default_project` (the env-default). The result is an `Option<String>`. Call the new orchestrator methods `recall_with_project(query, limit, prefer.as_deref())` and `recall_by_scope_with_project(query, scope, limit, prefer.as_deref())` respectively instead of `recall` / `recall_by_scope`. Keep query/scope/limit parsing and error handling unchanged.
+
+### Step 3: Include and normalize metadata in recall responses
+
+Edit `crates/cerebrum/src/mcp_server.rs`, functions `handle_recall` and `handle_recall_by_scope`. Normalize both result JSON shapes to emit the SAME fields for each entry: `id`, `content`, `salience`, `scope` (use `entry.scope.as_str()`), `tier` (`format!("{:?}", entry.tier)`), `timestamp`, and `metadata` (serialize `entry.metadata`, a `HashMap<String, String>`, as a JSON object via `json!(entry.metadata)`). This means adding `scope` to the `handle_recall` mapping and adding `metadata` to BOTH mappings. Keep the surrounding `success`/`count`/`results` envelope and error handling unchanged.
+
+## Phase 6: Provenance integration tests
+
+Commit message: `test: cover provenance ingest, weighting, and recall surface`
+
+### Step 1: Add store-level provenance tests
+
+Create `crates/cerebrum-core/tests/provenance_tests.rs`. Using `MockEmbedder` (dimension 384) and `tempfile::tempdir()` for any LanceDB path, add async tests:
+
+- Synapse round-trip: store a `MemoryEntry` whose metadata carries `status=active` and `project=["repoA"]` (JSON array string), then call `retrieve_scored(&query_vec, 10, None)` and assert the metadata survives on the returned entry.
+- Backward compatibility: store an entry with an empty metadata map, retrieve it, and assert it is returned (neutral weighting, never dropped).
+- Invalid enum accepted: store an entry with `status="bogus"`; assert it is returned by `retrieve_scored` and that `cerebrum_core::provenance::status_weight` of its metadata is `1.0` (unknown treated as active, never rejected).
+- Status deprioritization: store two entries with identical embeddings and salience but `status=active` vs `status=parked`; assert the active one ranks first in `retrieve_scored` output ordering.
+- Project membership boost: with two equally-similar entries tagged `project=["repoA"]` and `project=["repoB"]`, assert that `retrieve_scored(&qv, 10, Some("repoA"))` ranks the repoA entry first, and that an untagged entry is not penalized relative to a non-member entry.
+
+Use the crate's public API (`cerebrum_core::provenance`, `SynapseMemory`, `LanceDBCortex`, `MemoryEntry::builder`) and follow the Result-returning style; avoid `unwrap()` in non-test-assertion paths where a `?`/expect message is clearer.
+
+### Step 2: Add MCP round-trip provenance test
+
+Add a test to the existing `#[cfg(test)] mod tests` in `crates/cerebrum/src/mcp_server.rs`. Build a handler with `MockEmbedder` and a `tempdir` orchestrator, call `handle_remember` with content plus `type`, `status`, and `project` arguments, then call `handle_recall` for that content and parse the JSON response. Assert the matching result entry contains a `metadata` object carrying the expected `status`, `type`, and `project` values. Follow the existing test helpers and JSON-extraction pattern already used in `remember_persists_caller_salience`.
+
+## Phase 7: Documentation
+
+Commit message: `docs: document provenance metadata tags and recall weighting`
+
+### Step 1: Document provenance in the README
+
+Edit `README.md`. Add a "Provenance metadata" section documenting: the four tags (`project`, `type`, `status`, `confidence`) and their recommended vocabularies; that values are soft-validated (unknown values are accepted, never rejected, and never cause a memory to be dropped); the `CEREBRUM_PROJECT` environment variable as the default project source; the optional `prefer_project` recall argument and that it gently boosts (never excludes) matching memories; and that all tags are stored inside the existing `metadata_json` blob with no schema migration and full backward compatibility for existing rows. Match the existing README tone and formatting; do not remove unrelated sections.
