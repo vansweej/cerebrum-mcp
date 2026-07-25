@@ -7,6 +7,8 @@ Add structured provenance metadata to every stored memory and use it at recall t
 
 Commit message: `feat: add provenance metadata module with status and project weighting`
 
+Coverage: skip
+
 ### Step 1: Create the provenance module
 
 Create a new file `crates/cerebrum-core/src/provenance.rs`.
@@ -56,6 +58,8 @@ Keep all existing items in the file unchanged.
 ## Phase 2: Score-carrying retrieval across both tiers
 
 Commit message: `refactor: carry provenance-weighted scores out of memory stores`
+
+Coverage: skip
 
 ### Step 1: Add scored retrieval methods to the MemoryStore trait
 
@@ -132,6 +136,8 @@ Return `Vec<crate::models::ScoredMemory>` built as `ScoredMemory { entry, score 
 ## Phase 3: Merge tiers by carried score in the orchestrator
 
 Commit message: `feat: rank recall by carried provenance score and add prefer_project`
+
+Coverage: skip
 
 ### Step 1: Add project-aware recall methods to the orchestrator
 
@@ -213,6 +219,8 @@ Edit `crates/cerebrum/src/mcp_server.rs`, functions `handle_recall` and `handle_
 ## Phase 6: Provenance integration tests
 
 Commit message: `test: cover provenance ingest, weighting, and recall surface`
+
+Coverage: skip
 
 ### Step 1: Add store-level provenance tests
 
