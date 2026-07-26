@@ -16,12 +16,35 @@ use tracing::{debug, error, info};
 /// Implements the ServerHandler trait to expose memory tools via MCP protocol
 pub struct CerebrumHandler {
     orchestrator: Arc<MemoryOrchestrator>,
+    default_project: Vec<String>,
 }
 
 impl CerebrumHandler {
-    /// Create a new Cerebrum handler with the given orchestrator
+    /// Create a new Cerebrum handler with the given orchestrator.
+    ///
+    /// `default_project` defaults to an empty vec (no project preference).
+    #[allow(dead_code)]
     pub fn new(orchestrator: Arc<MemoryOrchestrator>) -> Self {
-        Self { orchestrator }
+        Self {
+            orchestrator,
+            default_project: Vec::new(),
+        }
+    }
+
+    /// Create a new Cerebrum handler with the given orchestrator and a list of
+    /// default project names.
+    ///
+    /// When `default_project` is non-empty the first entry is passed as
+    /// `prefer_project` to `recall_with_project` / `recall_by_scope_with_project`
+    /// so that memories belonging to those projects are ranked higher.
+    pub fn with_default_project(
+        orchestrator: Arc<MemoryOrchestrator>,
+        default_project: Vec<String>,
+    ) -> Self {
+        Self {
+            orchestrator,
+            default_project,
+        }
     }
 
     /// Parse a scope string into a MemoryScope. Defaults to Global when None.
@@ -61,6 +84,25 @@ impl CerebrumHandler {
                 "scope": {
                     "type": "string",
                     "description": "Memory scope: 'global', 'user:<id>', 'agent:<id>', or 'session:<id>'. Defaults to 'global'."
+                },
+                "type": {
+                    "type": "string",
+                    "description": "Provenance type. Recommended (not enforced): decision, finding, idea, done, plan, gotcha, convention, context."
+                },
+                "status": {
+                    "type": "string",
+                    "description": "Lifecycle status. Recommended: active, parked, done. Defaults to 'active'."
+                },
+                "confidence": {
+                    "type": "string",
+                    "description": "Optional confidence: proposed, confirmed, verified."
+                },
+                "project": {
+                    "description": "Project tag(s): a string or an array of strings. Merged with the server's CEREBRUM_PROJECT default.",
+                    "oneOf": [
+                        {"type": "string"},
+                        {"type": "array", "items": {"type": "string"}}
+                    ]
                 }
             },
             "required": ["content"]
@@ -220,8 +262,71 @@ impl CerebrumHandler {
             }
         };
 
-        // Build metadata HashMap (empty for now, can be extended)
-        let metadata = HashMap::new();
+        // Build provenance metadata from the tool arguments.
+        use cerebrum_core::provenance;
+        let mut metadata: HashMap<String, String> = HashMap::new();
+
+        // status: trim + lowercase; default to "active"
+        let status_val = args
+            .get("status")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_lowercase())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "active".to_string());
+        metadata.insert(provenance::KEY_STATUS.to_string(), status_val);
+
+        // type: insert only when present
+        if let Some(type_val) = args
+            .get("type")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_lowercase())
+            .filter(|s| !s.is_empty())
+        {
+            metadata.insert(provenance::KEY_TYPE.to_string(), type_val);
+        }
+
+        // confidence: insert only when present
+        if let Some(conf_val) = args
+            .get("confidence")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_lowercase())
+            .filter(|s| !s.is_empty())
+        {
+            metadata.insert(provenance::KEY_CONFIDENCE.to_string(), conf_val);
+        }
+
+        // project: collect provided values (string or array), prepend defaults, dedup
+        let provided_projects: Vec<String> = match args.get("project") {
+            Some(serde_json::Value::String(s)) => {
+                let t = s.trim().to_string();
+                if t.is_empty() {
+                    vec![]
+                } else {
+                    vec![t]
+                }
+            }
+            Some(serde_json::Value::Array(arr)) => arr
+                .iter()
+                .filter_map(|v| v.as_str())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect(),
+            _ => vec![],
+        };
+
+        let mut project_vec: Vec<String> = self.default_project.clone();
+        project_vec.extend(provided_projects);
+
+        // de-duplicate preserving order
+        let mut seen_projects = std::collections::HashSet::new();
+        project_vec.retain(|p| seen_projects.insert(p.clone()));
+
+        if !project_vec.is_empty() {
+            metadata.insert(
+                provenance::KEY_PROJECT.to_string(),
+                provenance::project_array_json(&project_vec),
+            );
+        }
 
         match self
             .orchestrator
