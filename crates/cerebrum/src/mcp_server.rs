@@ -1179,6 +1179,93 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn remember_persists_provenance_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let embedder: Arc<dyn cerebrum_core::Embedder> =
+            Arc::new(cerebrum_core::embedder::MockEmbedder::new());
+        let orchestrator = Arc::new(
+            MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
+                .await
+                .expect("Failed to create orchestrator"),
+        );
+        let handler = CerebrumHandler::new(orchestrator);
+
+        // Store a memory with provenance fields.
+        let store_result = handler
+            .handle_remember(Some(json!({
+                "content": "provenance test memory",
+                "type": "decision",
+                "status": "active",
+                "project": ["cerebrum", "atlas"]
+            })))
+            .await;
+        assert!(store_result.is_ok(), "remember should succeed");
+
+        // Recall the memory back.
+        let recall_result = handler
+            .handle_recall(Some(json!({
+                "query": "provenance test memory",
+                "limit": 5
+            })))
+            .await
+            .expect("recall should succeed");
+
+        // Extract the JSON payload from the first content item.
+        let text = match &recall_result.content[0].raw {
+            RawContent::Text(t) => t.text.clone(),
+            _ => panic!("expected text content from recall"),
+        };
+        let parsed: Value = serde_json::from_str(&text).expect("recall payload should be JSON");
+        let results = parsed["results"]
+            .as_array()
+            .expect("results should be an array");
+
+        // Find the entry we just stored.
+        let entry = results
+            .iter()
+            .find(|e| e["content"] == "provenance test memory")
+            .expect("stored memory should be returned by recall");
+
+        let metadata = &entry["metadata"];
+        assert!(metadata.is_object(), "metadata should be a JSON object");
+
+        // status must be "active" (lowercased by the handler).
+        assert_eq!(
+            metadata["status"], "active",
+            "expected status 'active', got {:?}",
+            metadata["status"]
+        );
+
+        // type must be "decision" (lowercased by the handler).
+        assert_eq!(
+            metadata["type"], "decision",
+            "expected type 'decision', got {:?}",
+            metadata["type"]
+        );
+
+        // project must be a JSON array string containing both project names.
+        let project_raw = metadata["project"]
+            .as_str()
+            .expect("project metadata should be a string");
+        let project_parsed: Value =
+            serde_json::from_str(project_raw).expect("project metadata should be valid JSON");
+        let project_arr = project_parsed
+            .as_array()
+            .expect("project metadata should be a JSON array");
+        let project_names: Vec<&str> = project_arr.iter().filter_map(|v| v.as_str()).collect();
+        assert!(
+            project_names.contains(&"cerebrum"),
+            "project array should contain 'cerebrum', got {:?}",
+            project_names
+        );
+        assert!(
+            project_names.contains(&"atlas"),
+            "project array should contain 'atlas', got {:?}",
+            project_names
+        );
+    }
+
+    #[tokio::test]
     async fn test_get_tool_recall_by_scope() {
         let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn cerebrum_core::Embedder> =
