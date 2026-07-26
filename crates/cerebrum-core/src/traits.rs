@@ -1,5 +1,5 @@
 use crate::error::Result;
-use crate::models::{MemoryEntry, MemoryId, MemoryScope};
+use crate::models::{MemoryEntry, MemoryId, MemoryScope, ScoredMemory};
 use async_trait::async_trait;
 
 /// Trait for embedding text into vector space.
@@ -23,16 +23,61 @@ pub trait MemoryStore: Send + Sync {
     /// Store a memory entry.
     async fn store(&self, entry: MemoryEntry) -> Result<()>;
 
+    /// Retrieve memories matching a query vector with blended scores, up to a limit.
+    ///
+    /// The `prefer_project` parameter optionally applies a provenance project-weight
+    /// multiplier to the blended score so that memories belonging to the preferred
+    /// project rank higher than non-member memories.
+    async fn retrieve_scored(
+        &self,
+        query_vec: &[f32],
+        limit: usize,
+        prefer_project: Option<&str>,
+    ) -> Result<Vec<ScoredMemory>>;
+
+    /// Retrieve memories matching a query vector and scope with blended scores, up to a limit.
+    ///
+    /// The `prefer_project` parameter optionally applies a provenance project-weight
+    /// multiplier to the blended score so that memories belonging to the preferred
+    /// project rank higher than non-member memories.
+    async fn retrieve_by_scope_scored(
+        &self,
+        query_vec: &[f32],
+        scope: &MemoryScope,
+        limit: usize,
+        prefer_project: Option<&str>,
+    ) -> Result<Vec<ScoredMemory>>;
+
     /// Retrieve memories matching a query vector, up to a limit.
-    async fn retrieve(&self, query_vec: &[f32], limit: usize) -> Result<Vec<MemoryEntry>>;
+    ///
+    /// Convenience wrapper over [`MemoryStore::retrieve_scored`] with
+    /// `prefer_project = None`; strips the score and returns plain entries.
+    async fn retrieve(&self, query_vec: &[f32], limit: usize) -> Result<Vec<MemoryEntry>> {
+        Ok(self
+            .retrieve_scored(query_vec, limit, None)
+            .await?
+            .into_iter()
+            .map(|s| s.entry)
+            .collect())
+    }
 
     /// Retrieve memories matching a query vector and scope, up to a limit.
+    ///
+    /// Convenience wrapper over [`MemoryStore::retrieve_by_scope_scored`] with
+    /// `prefer_project = None`; strips the score and returns plain entries.
     async fn retrieve_by_scope(
         &self,
         query_vec: &[f32],
         scope: &MemoryScope,
         limit: usize,
-    ) -> Result<Vec<MemoryEntry>>;
+    ) -> Result<Vec<MemoryEntry>> {
+        Ok(self
+            .retrieve_by_scope_scored(query_vec, scope, limit, None)
+            .await?
+            .into_iter()
+            .map(|s| s.entry)
+            .collect())
+    }
 
     /// Delete a memory by ID.
     async fn delete(&self, id: &MemoryId) -> Result<()>;
@@ -52,7 +97,8 @@ mod tests {
     use super::*;
 
     /// Minimal in-test store that implements MemoryStore with all required methods.
-    /// `retrieve` ignores its query vector and returns a fixed Vec of two entries.
+    /// `retrieve_scored` ignores its query vector and returns a fixed Vec of two
+    /// scored entries; `retrieve_by_scope_scored` returns an empty vec.
     struct DefaultStore;
 
     #[async_trait]
@@ -61,20 +107,32 @@ mod tests {
             Ok(())
         }
 
-        async fn retrieve(&self, _query_vec: &[f32], _limit: usize) -> Result<Vec<MemoryEntry>> {
-            // Return a fixed Vec of two entries regardless of input
+        async fn retrieve_scored(
+            &self,
+            _query_vec: &[f32],
+            _limit: usize,
+            _prefer_project: Option<&str>,
+        ) -> Result<Vec<ScoredMemory>> {
+            // Return a fixed Vec of two scored entries regardless of input
             Ok(vec![
-                MemoryEntry::new(MemoryId::new(), "content1".to_string()),
-                MemoryEntry::new(MemoryId::new(), "content2".to_string()),
+                ScoredMemory {
+                    entry: MemoryEntry::new(MemoryId::new(), "content1".to_string()),
+                    score: 1.0,
+                },
+                ScoredMemory {
+                    entry: MemoryEntry::new(MemoryId::new(), "content2".to_string()),
+                    score: 1.0,
+                },
             ])
         }
 
-        async fn retrieve_by_scope(
+        async fn retrieve_by_scope_scored(
             &self,
             _query_vec: &[f32],
             _scope: &MemoryScope,
             _limit: usize,
-        ) -> Result<Vec<MemoryEntry>> {
+            _prefer_project: Option<&str>,
+        ) -> Result<Vec<ScoredMemory>> {
             Ok(vec![])
         }
 

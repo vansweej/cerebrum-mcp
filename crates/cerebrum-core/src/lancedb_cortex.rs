@@ -418,11 +418,18 @@ impl MemoryStore for LanceDBCortex {
         Ok(())
     }
 
-    /// Retrieve memories by semantic similarity, blended with salience.
+    /// Retrieve memories by semantic similarity blended with salience and provenance weights.
     ///
-    /// Performs an exact full-scan so that the blend `0.7*similarity + 0.3*salience`
-    /// is computed over every row — no memory can be dropped by a vector pre-filter.
-    async fn retrieve(&self, query_vec: &[f32], limit: usize) -> Result<Vec<MemoryEntry>> {
+    /// Performs an exact full-scan so that the blend is computed over every row —
+    /// no memory can be dropped by a vector pre-filter.
+    async fn retrieve_scored(
+        &self,
+        query_vec: &[f32],
+        limit: usize,
+        prefer_project: Option<&str>,
+    ) -> Result<Vec<crate::models::ScoredMemory>> {
+        use crate::models::ScoredMemory;
+
         let table = self.table().await?;
         let row_count = table
             .count_rows(None)
@@ -442,36 +449,43 @@ impl MemoryStore for LanceDBCortex {
             .await
             .map_err(|e| CerebrumError::Database(e.to_string()))?;
 
-        let mut scored: Vec<(LanceDBMemoryRecord, f32)> = batches
+        let mut scored: Vec<ScoredMemory> = batches
             .iter()
             .flat_map(|b| Self::batch_to_records(b).unwrap_or_default())
-            .map(|record| {
+            .filter_map(|record| {
+                let entry = record.to_entry().ok()?;
                 let sim = Self::cosine_similarity(query_vec, &record.embedding);
-                let score = sim * 0.7 + record.salience * 0.3;
-                (record, score)
+                let base = sim * 0.7 + entry.salience * 0.3;
+                let score = base
+                    * crate::provenance::status_weight(&entry.metadata)
+                    * crate::provenance::project_weight(&entry.metadata, prefer_project);
+                Some(ScoredMemory { entry, score })
             })
             .collect();
 
-        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
-        scored
-            .into_iter()
-            .take(limit)
-            .map(|(r, _)| r.to_entry())
-            .collect()
+        Ok(scored.into_iter().take(limit).collect())
     }
 
-    /// Retrieve memories filtered by scope, then blended-score ranked.
+    /// Retrieve memories filtered by scope, then blended-score ranked with provenance weights.
     ///
     /// Pushes a coarse SQL predicate to LanceDB (reducing rows fetched),
     /// then applies the precise `MemoryScope::matches` logic in Rust to
     /// handle the bidirectional Global-matches-all semantic.
-    async fn retrieve_by_scope(
+    async fn retrieve_by_scope_scored(
         &self,
         query_vec: &[f32],
         scope: &MemoryScope,
         limit: usize,
-    ) -> Result<Vec<MemoryEntry>> {
+        prefer_project: Option<&str>,
+    ) -> Result<Vec<crate::models::ScoredMemory>> {
+        use crate::models::ScoredMemory;
+
         let table = self.table().await?;
         let row_count = table
             .count_rows(None)
@@ -508,7 +522,7 @@ impl MemoryStore for LanceDBCortex {
             .await
             .map_err(|e| CerebrumError::Database(e.to_string()))?;
 
-        let mut scored: Vec<(LanceDBMemoryRecord, f32)> = batches
+        let mut scored: Vec<ScoredMemory> = batches
             .iter()
             .flat_map(|b| Self::batch_to_records(b).unwrap_or_default())
             .filter_map(|record| {
@@ -518,18 +532,21 @@ impl MemoryStore for LanceDBCortex {
                     return None;
                 }
                 let sim = Self::cosine_similarity(query_vec, &record.embedding);
-                let score = sim * 0.7 + record.salience * 0.3;
-                Some((record, score))
+                let base = sim * 0.7 + entry.salience * 0.3;
+                let score = base
+                    * crate::provenance::status_weight(&entry.metadata)
+                    * crate::provenance::project_weight(&entry.metadata, prefer_project);
+                Some(ScoredMemory { entry, score })
             })
             .collect();
 
-        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
-        scored
-            .into_iter()
-            .take(limit)
-            .map(|(r, _)| r.to_entry())
-            .collect()
+        Ok(scored.into_iter().take(limit).collect())
     }
 
     /// Delete a memory by ID.

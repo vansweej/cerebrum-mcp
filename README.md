@@ -260,6 +260,60 @@ let result = manager.execute(&cortex, &config).await?;
 println!("Migration success rate: {:.2}%", result.success_rate());
 ```
 
+## Provenance metadata
+
+Every memory can carry four optional provenance tags. All tags are stored inside the existing `metadata_json` blob — no new Arrow columns, no schema migration, and full backward compatibility with existing rows that have no tags.
+
+### Tags and recommended vocabularies
+
+| Tag | Key | Recommended values | Notes |
+|---|---|---|---|
+| **project** | `project` | Any project name(s) | JSON array of strings, e.g. `["cerebrum","atlas"]`. Also accepts a bare string. |
+| **type** | `type` | `decision`, `finding`, `idea`, `done`, `plan`, `gotcha`, `convention`, `context` | Free-form; recommended values are not enforced. |
+| **status** | `status` | `active`, `parked`, `done` | Defaults to `active` when omitted. `parked` and `done` reduce recall ranking weight. |
+| **confidence** | `confidence` | `proposed`, `confirmed`, `verified` | Optional; omit when not applicable. |
+
+### Soft validation
+
+All tag values are accepted as-is. Unknown or misspelled values are never rejected and never cause a memory to be dropped. An unknown `status` value (e.g. `"in-progress"`) is treated as neutral (weight `1.0`), identical to `"active"`.
+
+### Setting tags via the `remember` tool
+
+```json
+{
+  "content": "Decided to use LanceDB for persistent storage",
+  "type": "decision",
+  "status": "active",
+  "confidence": "confirmed",
+  "project": ["cerebrum", "atlas"]
+}
+```
+
+The `project` field accepts either a single string or an array of strings. Values are merged with the server's `CEREBRUM_PROJECT` default (see below) and de-duplicated before storage.
+
+### Default project — `CEREBRUM_PROJECT`
+
+Set the `CEREBRUM_PROJECT` environment variable to a comma-separated list of project names. The server prepends these to every memory's project list automatically, so you never need to pass `project` explicitly for the current repo:
+
+```bash
+CEREBRUM_PROJECT=cerebrum,atlas cerebrum
+```
+
+### Boosting recall by project — `prefer_project`
+
+Both `recall` and `recall_by_scope` accept an optional `prefer_project` argument:
+
+```json
+{
+  "query": "storage decisions",
+  "prefer_project": "cerebrum"
+}
+```
+
+Memories whose project list contains `prefer_project` receive a ranking boost (weight `1.0`). Memories in other projects are gently deprioritised (weight `0.7`). Untagged memories are always neutral (weight `1.0`). **No memory is ever excluded** — `prefer_project` is a soft boost, not a filter.
+
+When `prefer_project` is omitted, the server falls back to the first entry in `CEREBRUM_PROJECT` (if set).
+
 ## Troubleshooting
 
 ### Ollama Connection Issues

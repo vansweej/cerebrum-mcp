@@ -16,12 +16,35 @@ use tracing::{debug, error, info};
 /// Implements the ServerHandler trait to expose memory tools via MCP protocol
 pub struct CerebrumHandler {
     orchestrator: Arc<MemoryOrchestrator>,
+    default_project: Vec<String>,
 }
 
 impl CerebrumHandler {
-    /// Create a new Cerebrum handler with the given orchestrator
+    /// Create a new Cerebrum handler with the given orchestrator.
+    ///
+    /// `default_project` defaults to an empty vec (no project preference).
+    #[allow(dead_code)]
     pub fn new(orchestrator: Arc<MemoryOrchestrator>) -> Self {
-        Self { orchestrator }
+        Self {
+            orchestrator,
+            default_project: Vec::new(),
+        }
+    }
+
+    /// Create a new Cerebrum handler with the given orchestrator and a list of
+    /// default project names.
+    ///
+    /// When `default_project` is non-empty the first entry is passed as
+    /// `prefer_project` to `recall_with_project` / `recall_by_scope_with_project`
+    /// so that memories belonging to those projects are ranked higher.
+    pub fn with_default_project(
+        orchestrator: Arc<MemoryOrchestrator>,
+        default_project: Vec<String>,
+    ) -> Self {
+        Self {
+            orchestrator,
+            default_project,
+        }
     }
 
     /// Parse a scope string into a MemoryScope. Defaults to Global when None.
@@ -61,6 +84,25 @@ impl CerebrumHandler {
                 "scope": {
                     "type": "string",
                     "description": "Memory scope: 'global', 'user:<id>', 'agent:<id>', or 'session:<id>'. Defaults to 'global'."
+                },
+                "type": {
+                    "type": "string",
+                    "description": "Provenance type. Recommended (not enforced): decision, finding, idea, done, plan, gotcha, convention, context."
+                },
+                "status": {
+                    "type": "string",
+                    "description": "Lifecycle status. Recommended: active, parked, done. Defaults to 'active'."
+                },
+                "confidence": {
+                    "type": "string",
+                    "description": "Optional confidence: proposed, confirmed, verified."
+                },
+                "project": {
+                    "description": "Project tag(s): a string or an array of strings. Merged with the server's CEREBRUM_PROJECT default.",
+                    "oneOf": [
+                        {"type": "string"},
+                        {"type": "array", "items": {"type": "string"}}
+                    ]
                 }
             },
             "required": ["content"]
@@ -88,6 +130,10 @@ impl CerebrumHandler {
                     "description": "Maximum number of results to return (default: 10)",
                     "minimum": 1,
                     "maximum": 100
+                },
+                "prefer_project": {
+                    "type": "string",
+                    "description": "Optional project name to gently boost matching memories in ranking (never excludes others). Defaults to the server's CEREBRUM_PROJECT."
                 }
             },
             "required": ["query"]
@@ -184,6 +230,10 @@ impl CerebrumHandler {
                     "description": "Maximum number of results to return (default: 10)",
                     "minimum": 1,
                     "maximum": 100
+                },
+                "prefer_project": {
+                    "type": "string",
+                    "description": "Optional project name to gently boost matching memories in ranking (never excludes others). Defaults to the server's CEREBRUM_PROJECT."
                 }
             },
             "required": ["query", "scope"]
@@ -220,8 +270,71 @@ impl CerebrumHandler {
             }
         };
 
-        // Build metadata HashMap (empty for now, can be extended)
-        let metadata = HashMap::new();
+        // Build provenance metadata from the tool arguments.
+        use cerebrum_core::provenance;
+        let mut metadata: HashMap<String, String> = HashMap::new();
+
+        // status: trim + lowercase; default to "active"
+        let status_val = args
+            .get("status")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_lowercase())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "active".to_string());
+        metadata.insert(provenance::KEY_STATUS.to_string(), status_val);
+
+        // type: insert only when present
+        if let Some(type_val) = args
+            .get("type")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_lowercase())
+            .filter(|s| !s.is_empty())
+        {
+            metadata.insert(provenance::KEY_TYPE.to_string(), type_val);
+        }
+
+        // confidence: insert only when present
+        if let Some(conf_val) = args
+            .get("confidence")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_lowercase())
+            .filter(|s| !s.is_empty())
+        {
+            metadata.insert(provenance::KEY_CONFIDENCE.to_string(), conf_val);
+        }
+
+        // project: collect provided values (string or array), prepend defaults, dedup
+        let provided_projects: Vec<String> = match args.get("project") {
+            Some(serde_json::Value::String(s)) => {
+                let t = s.trim().to_string();
+                if t.is_empty() {
+                    vec![]
+                } else {
+                    vec![t]
+                }
+            }
+            Some(serde_json::Value::Array(arr)) => arr
+                .iter()
+                .filter_map(|v| v.as_str())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect(),
+            _ => vec![],
+        };
+
+        let mut project_vec: Vec<String> = self.default_project.clone();
+        project_vec.extend(provided_projects);
+
+        // de-duplicate preserving order
+        let mut seen_projects = std::collections::HashSet::new();
+        project_vec.retain(|p| seen_projects.insert(p.clone()));
+
+        if !project_vec.is_empty() {
+            metadata.insert(
+                provenance::KEY_PROJECT.to_string(),
+                provenance::project_array_json(&project_vec),
+            );
+        }
 
         match self
             .orchestrator
@@ -262,7 +375,18 @@ impl CerebrumHandler {
 
         let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
 
-        match self.orchestrator.recall(query, limit).await {
+        let prefer: Option<String> = args
+            .get("prefer_project")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .or_else(|| self.default_project.first().cloned());
+
+        match self
+            .orchestrator
+            .recall_with_project(query, limit, prefer.as_deref())
+            .await
+        {
             Ok(results) => {
                 info!("Recall found {} results", results.len());
                 let result_json: Vec<Value> = results
@@ -272,8 +396,10 @@ impl CerebrumHandler {
                             "id": entry.id.to_string(),
                             "content": entry.content,
                             "salience": entry.salience,
+                            "scope": entry.scope.as_str(),
                             "tier": format!("{:?}", entry.tier),
-                            "timestamp": entry.timestamp
+                            "timestamp": entry.timestamp,
+                            "metadata": json!(entry.metadata)
                         })
                     })
                     .collect();
@@ -430,7 +556,18 @@ impl CerebrumHandler {
             }
         };
 
-        match self.orchestrator.recall_by_scope(query, scope, limit).await {
+        let prefer: Option<String> = args
+            .get("prefer_project")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .or_else(|| self.default_project.first().cloned());
+
+        match self
+            .orchestrator
+            .recall_by_scope_with_project(query, scope, limit, prefer.as_deref())
+            .await
+        {
             Ok(results) => {
                 info!("Recall by scope found {} results", results.len());
                 let result_json: Vec<Value> = results
@@ -442,7 +579,8 @@ impl CerebrumHandler {
                             "salience": entry.salience,
                             "scope": entry.scope.as_str(),
                             "tier": format!("{:?}", entry.tier),
-                            "timestamp": entry.timestamp
+                            "timestamp": entry.timestamp,
+                            "metadata": json!(entry.metadata)
                         })
                     })
                     .collect();
@@ -1038,6 +1176,93 @@ mod tests {
             })))
             .await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn remember_persists_provenance_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let embedder: Arc<dyn cerebrum_core::Embedder> =
+            Arc::new(cerebrum_core::embedder::MockEmbedder::new());
+        let orchestrator = Arc::new(
+            MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
+                .await
+                .expect("Failed to create orchestrator"),
+        );
+        let handler = CerebrumHandler::new(orchestrator);
+
+        // Store a memory with provenance fields.
+        let store_result = handler
+            .handle_remember(Some(json!({
+                "content": "provenance test memory",
+                "type": "decision",
+                "status": "active",
+                "project": ["cerebrum", "atlas"]
+            })))
+            .await;
+        assert!(store_result.is_ok(), "remember should succeed");
+
+        // Recall the memory back.
+        let recall_result = handler
+            .handle_recall(Some(json!({
+                "query": "provenance test memory",
+                "limit": 5
+            })))
+            .await
+            .expect("recall should succeed");
+
+        // Extract the JSON payload from the first content item.
+        let text = match &recall_result.content[0].raw {
+            RawContent::Text(t) => t.text.clone(),
+            _ => panic!("expected text content from recall"),
+        };
+        let parsed: Value = serde_json::from_str(&text).expect("recall payload should be JSON");
+        let results = parsed["results"]
+            .as_array()
+            .expect("results should be an array");
+
+        // Find the entry we just stored.
+        let entry = results
+            .iter()
+            .find(|e| e["content"] == "provenance test memory")
+            .expect("stored memory should be returned by recall");
+
+        let metadata = &entry["metadata"];
+        assert!(metadata.is_object(), "metadata should be a JSON object");
+
+        // status must be "active" (lowercased by the handler).
+        assert_eq!(
+            metadata["status"], "active",
+            "expected status 'active', got {:?}",
+            metadata["status"]
+        );
+
+        // type must be "decision" (lowercased by the handler).
+        assert_eq!(
+            metadata["type"], "decision",
+            "expected type 'decision', got {:?}",
+            metadata["type"]
+        );
+
+        // project must be a JSON array string containing both project names.
+        let project_raw = metadata["project"]
+            .as_str()
+            .expect("project metadata should be a string");
+        let project_parsed: Value =
+            serde_json::from_str(project_raw).expect("project metadata should be valid JSON");
+        let project_arr = project_parsed
+            .as_array()
+            .expect("project metadata should be a JSON array");
+        let project_names: Vec<&str> = project_arr.iter().filter_map(|v| v.as_str()).collect();
+        assert!(
+            project_names.contains(&"cerebrum"),
+            "project array should contain 'cerebrum', got {:?}",
+            project_names
+        );
+        assert!(
+            project_names.contains(&"atlas"),
+            "project array should contain 'atlas', got {:?}",
+            project_names
+        );
     }
 
     #[tokio::test]

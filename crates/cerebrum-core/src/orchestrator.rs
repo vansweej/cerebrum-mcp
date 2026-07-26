@@ -3,7 +3,7 @@ use crate::embedder::Embedder;
 use crate::error::Result;
 use crate::fastembed_embedder::FastEmbedEmbedder;
 use crate::lancedb_cortex::LanceDBCortex;
-use crate::models::{MemoryEntry, MemoryId, MemoryScope, MemoryTier};
+use crate::models::{MemoryEntry, MemoryId, MemoryScope, MemoryTier, ScoredMemory};
 use crate::synapse::SynapseMemory;
 use crate::traits::MemoryStore;
 use std::collections::HashMap;
@@ -200,13 +200,16 @@ impl MemoryOrchestrator {
 
     /// Recall memories matching a query from both tiers.
     ///
+    /// Convenience wrapper around [`MemoryOrchestrator::recall_with_project`]
+    /// with `prefer_project = None`.
+    ///
     /// # Blended Search
     /// Performs semantic search across both Synapse and Cortex:
     /// 1. Embeds the query with `query_prefix` (e.g., "search_query: ")
     /// 2. Searches Synapse (in-memory, fast, session-scoped)
     /// 3. Searches Cortex (persistent, comprehensive)
     /// 4. Merges results and deduplicates by ID
-    /// 5. Ranks by salience (descending)
+    /// 5. Ranks by blended score (semantic similarity × salience × provenance weights, descending)
     /// 6. Returns top N results
     ///
     /// # Embedding & Prefix Application
@@ -220,8 +223,39 @@ impl MemoryOrchestrator {
     /// * `limit` - Maximum number of results to return
     ///
     /// # Returns
-    /// Ranked list of matching memories (sorted by salience, descending)
+    /// Ranked list of matching memories (sorted by blended score with provenance
+    /// weighting, descending)
     pub async fn recall(&self, query: String, limit: usize) -> Result<Vec<MemoryEntry>> {
+        self.recall_with_project(query, limit, None).await
+    }
+
+    /// Recall memories matching a query from both tiers, optionally boosting a
+    /// preferred project.
+    ///
+    /// # Blended Search
+    /// Performs semantic search across both Synapse and Cortex:
+    /// 1. Embeds the query with `query_prefix` (e.g., "search_query: ")
+    /// 2. Calls `retrieve_scored` on both Synapse and Cortex with `prefer_project`
+    /// 3. Merges the two `Vec<ScoredMemory>` into one
+    /// 4. Sorts by `score` descending
+    /// 5. Deduplicates by `entry.id`, keeping the highest-scored occurrence
+    /// 6. Returns top N entries (score stripped)
+    ///
+    /// # Arguments
+    /// * `query`          - The search query (will be prefixed before embedding)
+    /// * `limit`          - Maximum number of results to return
+    /// * `prefer_project` - Optional project name; memories in this project are
+    ///   ranked higher via the provenance weight multiplier
+    ///
+    /// # Returns
+    /// Ranked list of matching memories (sorted by blended score with provenance
+    /// weighting, descending)
+    pub async fn recall_with_project(
+        &self,
+        query: String,
+        limit: usize,
+        prefer_project: Option<&str>,
+    ) -> Result<Vec<MemoryEntry>> {
         // Embed the query exactly once (with the asymmetric query prefix), then
         // pass the SAME vector to both tiers. This ensures consistent ranking.
         let query_vec = self
@@ -230,33 +264,43 @@ impl MemoryOrchestrator {
             .await?;
 
         // Search both tiers with the shared query vector.
-        let synapse_results = self.synapse.retrieve(&query_vec, limit).await?;
-        let cortex_results = self.cortex.retrieve(&query_vec, limit).await?;
+        let mut synapse_scored: Vec<ScoredMemory> = self
+            .synapse
+            .retrieve_scored(&query_vec, limit, prefer_project)
+            .await?;
+        let cortex_scored: Vec<ScoredMemory> = self
+            .cortex
+            .retrieve_scored(&query_vec, limit, prefer_project)
+            .await?;
 
-        // Merge results
-        let mut all_results = Vec::new();
-        all_results.extend(synapse_results);
-        all_results.extend(cortex_results);
+        // Merge scored results from both tiers.
+        synapse_scored.extend(cortex_scored);
+        let mut all_scored = synapse_scored;
 
-        // Remove duplicates (keep first occurrence)
-        let mut seen = std::collections::HashSet::new();
-        all_results.retain(|entry| seen.insert(entry.id));
-
-        // Sort by salience (descending)
-        all_results.sort_by(|a, b| {
-            b.salience
-                .partial_cmp(&a.salience)
+        // Sort by score descending so the best result wins dedup.
+        all_scored.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
-        // Return top N
-        Ok(all_results.into_iter().take(limit).collect())
+        // Deduplicate by entry.id, keeping the first (highest-scored) occurrence.
+        let mut seen = std::collections::HashSet::new();
+        all_scored.retain(|sm| seen.insert(sm.entry.id));
+
+        // Strip scores and return top N.
+        Ok(all_scored
+            .into_iter()
+            .take(limit)
+            .map(|sm| sm.entry)
+            .collect())
     }
 
     /// Recall memories matching a query and scope from both tiers (Phase 5).
     ///
-    /// Performs blended search across Synapse and Cortex, filtering by scope,
-    /// and merging and ranking results by relevance and salience.
+    /// Convenience wrapper around
+    /// [`MemoryOrchestrator::recall_by_scope_with_project`] with
+    /// `prefer_project = None`.
     ///
     /// # Arguments
     /// * `query` - The search query
@@ -271,6 +315,30 @@ impl MemoryOrchestrator {
         scope: MemoryScope,
         limit: usize,
     ) -> Result<Vec<MemoryEntry>> {
+        self.recall_by_scope_with_project(query, scope, limit, None)
+            .await
+    }
+
+    /// Recall memories matching a query and scope from both tiers, optionally
+    /// boosting a preferred project.
+    ///
+    /// # Arguments
+    /// * `query`          - The search query
+    /// * `scope`          - Memory scope filter
+    /// * `limit`          - Maximum number of results to return
+    /// * `prefer_project` - Optional project name; memories in this project are
+    ///   ranked higher via the provenance weight multiplier
+    ///
+    /// # Returns
+    /// Ranked list of matching memories within the specified scope, sorted by
+    /// blended score with provenance weighting, descending
+    pub async fn recall_by_scope_with_project(
+        &self,
+        query: String,
+        scope: MemoryScope,
+        limit: usize,
+        prefer_project: Option<&str>,
+    ) -> Result<Vec<MemoryEntry>> {
         // Embed the query exactly once (with the asymmetric query prefix), then
         // pass the SAME vector to both tiers.
         let query_vec = self
@@ -279,33 +347,36 @@ impl MemoryOrchestrator {
             .await?;
 
         // Search both tiers with the shared query vector and scope filtering.
-        let synapse_results = self
+        let mut synapse_scored: Vec<ScoredMemory> = self
             .synapse
-            .retrieve_by_scope(&query_vec, &scope, limit)
+            .retrieve_by_scope_scored(&query_vec, &scope, limit, prefer_project)
             .await?;
-        let cortex_results = self
+        let cortex_scored: Vec<ScoredMemory> = self
             .cortex
-            .retrieve_by_scope(&query_vec, &scope, limit)
+            .retrieve_by_scope_scored(&query_vec, &scope, limit, prefer_project)
             .await?;
 
-        // Merge results
-        let mut all_results = Vec::new();
-        all_results.extend(synapse_results);
-        all_results.extend(cortex_results);
+        // Merge scored results from both tiers.
+        synapse_scored.extend(cortex_scored);
+        let mut all_scored = synapse_scored;
 
-        // Remove duplicates (keep first occurrence)
-        let mut seen = std::collections::HashSet::new();
-        all_results.retain(|entry| seen.insert(entry.id));
-
-        // Sort by salience (descending)
-        all_results.sort_by(|a, b| {
-            b.salience
-                .partial_cmp(&a.salience)
+        // Sort by score descending so the best result wins dedup.
+        all_scored.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
-        // Return top N
-        Ok(all_results.into_iter().take(limit).collect())
+        // Deduplicate by entry.id, keeping the first (highest-scored) occurrence.
+        let mut seen = std::collections::HashSet::new();
+        all_scored.retain(|sm| seen.insert(sm.entry.id));
+
+        // Strip scores and return top N.
+        Ok(all_scored
+            .into_iter()
+            .take(limit)
+            .map(|sm| sm.entry)
+            .collect())
     }
     ///
     /// Moves a memory from short-term to long-term storage.

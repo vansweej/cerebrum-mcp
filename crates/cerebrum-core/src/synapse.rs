@@ -1,5 +1,5 @@
 use crate::error::Result;
-use crate::models::{MemoryEntry, MemoryId, MemoryScope};
+use crate::models::{MemoryEntry, MemoryId, MemoryScope, ScoredMemory};
 use crate::traits::MemoryStore;
 use async_trait::async_trait;
 use parking_lot::RwLock;
@@ -92,74 +92,82 @@ impl MemoryStore for SynapseMemory {
         Ok(())
     }
 
-    async fn retrieve(&self, query_vec: &[f32], limit: usize) -> Result<Vec<MemoryEntry>> {
+    async fn retrieve_scored(
+        &self,
+        query_vec: &[f32],
+        limit: usize,
+        prefer_project: Option<&str>,
+    ) -> Result<Vec<ScoredMemory>> {
         let memories = self.memories.read();
 
-        // If no memories, return empty
         if memories.is_empty() {
             return Ok(Vec::new());
         }
 
-        // Score all memories by similarity against the supplied query vector
-        let mut scored: Vec<_> = memories
+        let mut scored: Vec<ScoredMemory> = memories
             .values()
             .filter_map(|entry| {
                 entry.embedding.as_ref().map(|embedding| {
                     let similarity = Self::cosine_similarity(query_vec, embedding);
-                    // Combine similarity with salience for ranking
-                    let score = (similarity * 0.7) + (entry.salience * 0.3);
-                    (entry.clone(), score)
+                    let base = (similarity * 0.7) + (entry.salience * 0.3);
+                    let score = base
+                        * crate::provenance::status_weight(&entry.metadata)
+                        * crate::provenance::project_weight(&entry.metadata, prefer_project);
+                    ScoredMemory {
+                        entry: entry.clone(),
+                        score,
+                    }
                 })
             })
             .collect();
 
-        // Sort by score (descending)
-        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
-        // Return top N
-        Ok(scored
-            .into_iter()
-            .take(limit)
-            .map(|(entry, _)| entry)
-            .collect())
+        Ok(scored.into_iter().take(limit).collect())
     }
 
-    async fn retrieve_by_scope(
+    async fn retrieve_by_scope_scored(
         &self,
         query_vec: &[f32],
         scope: &MemoryScope,
         limit: usize,
-    ) -> Result<Vec<MemoryEntry>> {
+        prefer_project: Option<&str>,
+    ) -> Result<Vec<ScoredMemory>> {
         let memories = self.memories.read();
 
-        // If no memories, return empty
         if memories.is_empty() {
             return Ok(Vec::new());
         }
 
-        // Score all memories by similarity, filtering by scope
-        let mut scored: Vec<_> = memories
+        let mut scored: Vec<ScoredMemory> = memories
             .values()
             .filter(|entry| entry.scope.matches(scope))
             .filter_map(|entry| {
                 entry.embedding.as_ref().map(|embedding| {
                     let similarity = Self::cosine_similarity(query_vec, embedding);
-                    // Combine similarity with salience for ranking
-                    let score = (similarity * 0.7) + (entry.salience * 0.3);
-                    (entry.clone(), score)
+                    let base = (similarity * 0.7) + (entry.salience * 0.3);
+                    let score = base
+                        * crate::provenance::status_weight(&entry.metadata)
+                        * crate::provenance::project_weight(&entry.metadata, prefer_project);
+                    ScoredMemory {
+                        entry: entry.clone(),
+                        score,
+                    }
                 })
             })
             .collect();
 
-        // Sort by score (descending)
-        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
-        // Return top N
-        Ok(scored
-            .into_iter()
-            .take(limit)
-            .map(|(entry, _)| entry)
-            .collect())
+        Ok(scored.into_iter().take(limit).collect())
     }
 
     async fn delete(&self, id: &MemoryId) -> Result<()> {

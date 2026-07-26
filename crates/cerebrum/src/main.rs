@@ -13,7 +13,17 @@ async fn main() -> anyhow::Result<()> {
     // Initialize memory orchestrator with real Ollama embeddings from Config.
     let config = cerebrum_core::Config::default();
     let orchestrator = Arc::new(MemoryOrchestrator::from_config(&config).await?);
-    let handler = CerebrumHandler::new(orchestrator);
+
+    // Read optional project preference from the environment.
+    // CEREBRUM_PROJECT may be a comma-separated list of project names.
+    let projects: Vec<String> = std::env::var("CEREBRUM_PROJECT")
+        .unwrap_or_default()
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    let handler = CerebrumHandler::with_default_project(orchestrator, projects);
 
     tracing::info!("Cerebrum MCP server initialized");
     tracing::info!("Available tools: remember, recall, memorize, forget, end_session");

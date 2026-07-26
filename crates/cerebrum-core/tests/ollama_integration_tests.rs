@@ -38,12 +38,21 @@ async fn test_from_config_with_mocked_ollama() {
     );
 }
 
-/// Test that warmup probe validates embedding dimension.
+/// Test that a dimension mismatch surfaces as an error on the first embedding
+/// request, not during `from_config`.
+///
+/// `MemoryOrchestrator::from_config` uses a lazy startup pattern: Ollama
+/// connectivity and dimension validation are deferred to the first
+/// `remember()` / `recall()` call rather than checked eagerly at
+/// construction time (see the `construction_does_no_network` regression
+/// test in `orchestrator.rs`). This test previously asserted the opposite
+/// (an eager warmup probe failing `from_config` itself), which no longer
+/// matches the intentional lazy-startup design.
 #[tokio::test]
-async fn test_warmup_probe_validates_dimension() {
+async fn test_dimension_mismatch_errors_on_first_embed_not_from_config() {
     let mock_server = MockServer::start().await;
 
-    // Mock with wrong dimension (384 instead of 768)
+    // Mock with wrong dimension (384 instead of 768).
     Mock::given(method("POST"))
         .and(path("/api/embed"))
         .respond_with(
@@ -58,8 +67,22 @@ async fn test_warmup_probe_validates_dimension() {
 
     let orchestrator = MemoryOrchestrator::from_config(&config).await;
     assert!(
-        orchestrator.is_err(),
-        "from_config should fail when dimension doesn't match"
+        orchestrator.is_ok(),
+        "from_config should succeed regardless of dimension mismatch (lazy startup)"
+    );
+
+    // The dimension mismatch only surfaces once an embedding is actually requested.
+    let result = orchestrator
+        .unwrap()
+        .remember(
+            "test memory".to_string(),
+            std::collections::HashMap::new(),
+            MemoryScope::Global,
+        )
+        .await;
+    assert!(
+        result.is_err(),
+        "remember should fail once the mismatched embedding is actually requested"
     );
 }
 

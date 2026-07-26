@@ -92,6 +92,20 @@ impl fmt::Display for MemoryScope {
     }
 }
 
+/// A memory paired with its blended-and-weighted rank score.
+///
+/// Carries the store-computed score (`sim*0.7 + salience*0.3`, multiplied by
+/// the provenance status and project weights) across the tier boundary so the
+/// orchestrator can merge results from both tiers by a single comparable score
+/// instead of re-ranking by salience alone.
+#[derive(Debug, Clone)]
+pub struct ScoredMemory {
+    /// The underlying memory entry.
+    pub entry: MemoryEntry,
+    /// Blended similarity/salience score after provenance weighting.
+    pub score: f32,
+}
+
 /// A single memory entry with content, metadata, and embedding.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryEntry {
