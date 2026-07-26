@@ -130,6 +130,10 @@ impl CerebrumHandler {
                     "description": "Maximum number of results to return (default: 10)",
                     "minimum": 1,
                     "maximum": 100
+                },
+                "prefer_project": {
+                    "type": "string",
+                    "description": "Optional project name to gently boost matching memories in ranking (never excludes others). Defaults to the server's CEREBRUM_PROJECT."
                 }
             },
             "required": ["query"]
@@ -226,6 +230,10 @@ impl CerebrumHandler {
                     "description": "Maximum number of results to return (default: 10)",
                     "minimum": 1,
                     "maximum": 100
+                },
+                "prefer_project": {
+                    "type": "string",
+                    "description": "Optional project name to gently boost matching memories in ranking (never excludes others). Defaults to the server's CEREBRUM_PROJECT."
                 }
             },
             "required": ["query", "scope"]
@@ -367,7 +375,18 @@ impl CerebrumHandler {
 
         let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
 
-        match self.orchestrator.recall(query, limit).await {
+        let prefer: Option<String> = args
+            .get("prefer_project")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .or_else(|| self.default_project.first().cloned());
+
+        match self
+            .orchestrator
+            .recall_with_project(query, limit, prefer.as_deref())
+            .await
+        {
             Ok(results) => {
                 info!("Recall found {} results", results.len());
                 let result_json: Vec<Value> = results
@@ -377,8 +396,10 @@ impl CerebrumHandler {
                             "id": entry.id.to_string(),
                             "content": entry.content,
                             "salience": entry.salience,
+                            "scope": entry.scope.as_str(),
                             "tier": format!("{:?}", entry.tier),
-                            "timestamp": entry.timestamp
+                            "timestamp": entry.timestamp,
+                            "metadata": json!(entry.metadata)
                         })
                     })
                     .collect();
@@ -535,7 +556,18 @@ impl CerebrumHandler {
             }
         };
 
-        match self.orchestrator.recall_by_scope(query, scope, limit).await {
+        let prefer: Option<String> = args
+            .get("prefer_project")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .or_else(|| self.default_project.first().cloned());
+
+        match self
+            .orchestrator
+            .recall_by_scope_with_project(query, scope, limit, prefer.as_deref())
+            .await
+        {
             Ok(results) => {
                 info!("Recall by scope found {} results", results.len());
                 let result_json: Vec<Value> = results
@@ -547,7 +579,8 @@ impl CerebrumHandler {
                             "salience": entry.salience,
                             "scope": entry.scope.as_str(),
                             "tier": format!("{:?}", entry.tier),
-                            "timestamp": entry.timestamp
+                            "timestamp": entry.timestamp,
+                            "metadata": json!(entry.metadata)
                         })
                     })
                     .collect();
