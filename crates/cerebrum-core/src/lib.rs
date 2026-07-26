@@ -9,6 +9,7 @@ pub mod models;
 pub mod observability;
 pub mod orchestrator;
 pub mod promotion;
+pub mod provenance;
 pub mod resilience;
 pub mod summarization;
 pub mod synapse;
@@ -34,6 +35,10 @@ pub use orchestrator::MemoryOrchestrator;
 pub use promotion::{
     FrequencyBasedPromotion, HybridPromotion, ImportanceBasedPromotion, PromotionContext,
     PromotionStrategy, RecencyBasedPromotion,
+};
+pub use provenance::{
+    parse_project_array, project_array_json, project_weight, status_weight, KEY_CONFIDENCE,
+    KEY_PROJECT, KEY_STATUS, KEY_TYPE,
 };
 pub use resilience::{CircuitBreaker, CircuitBreakerConfig, CircuitState, RetryConfig};
 pub use summarization::{
