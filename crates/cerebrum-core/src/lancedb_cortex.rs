@@ -129,6 +129,8 @@ fn parse_scope_string(scope_str: &str) -> Result<MemoryScope> {
         Ok(MemoryScope::Agent(agent_id.to_string()))
     } else if let Some(session_id) = scope_str.strip_prefix("session:") {
         Ok(MemoryScope::Session(session_id.to_string()))
+    } else if let Some(plan_id) = scope_str.strip_prefix("plan:") {
+        Ok(MemoryScope::Plan(plan_id.to_string()))
     } else {
         Err(CerebrumError::Validation(format!(
             "Invalid scope string: {}",
@@ -1116,6 +1118,7 @@ mod tests {
             MemoryScope::User("user1".to_string()),
             MemoryScope::Agent("agent1".to_string()),
             MemoryScope::Session("session1".to_string()),
+            MemoryScope::Plan("plan1".to_string()),
         ];
 
         for scope in scopes {
