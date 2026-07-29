@@ -136,6 +136,7 @@ impl MemoryStore for SynapseMemory {
         scope: &MemoryScope,
         limit: usize,
         prefer_project: Option<&str>,
+        exact_scope: bool,
     ) -> Result<Vec<ScoredMemory>> {
         let memories = self.memories.read();
 
@@ -145,7 +146,13 @@ impl MemoryStore for SynapseMemory {
 
         let mut scored: Vec<ScoredMemory> = memories
             .values()
-            .filter(|entry| entry.scope.matches(scope))
+            .filter(|entry| {
+                if exact_scope {
+                    entry.scope == *scope
+                } else {
+                    entry.scope.matches(scope)
+                }
+            })
             .filter_map(|entry| {
                 entry.embedding.as_ref().map(|embedding| {
                     let similarity = Self::cosine_similarity(query_vec, embedding);

@@ -315,7 +315,7 @@ impl MemoryOrchestrator {
         scope: MemoryScope,
         limit: usize,
     ) -> Result<Vec<MemoryEntry>> {
-        self.recall_by_scope_with_project(query, scope, limit, None)
+        self.recall_by_scope_with_project(query, scope, limit, None, false)
             .await
     }
 
@@ -328,6 +328,12 @@ impl MemoryOrchestrator {
     /// * `limit`          - Maximum number of results to return
     /// * `prefer_project` - Optional project name; memories in this project are
     ///   ranked higher via the provenance weight multiplier
+    /// * `exact_scope`    - When `true`, restricts results to memories whose
+    ///   scope is *exactly* `scope` — global memories are excluded from the
+    ///   candidate set entirely rather than merely deprioritized. Use this
+    ///   when the caller already knows the precise scope it wants (e.g.
+    ///   fetching a specific plan or session), to avoid a large corpus of
+    ///   high-salience global memories crowding the target out of `limit`.
     ///
     /// # Returns
     /// Ranked list of matching memories within the specified scope, sorted by
@@ -338,6 +344,7 @@ impl MemoryOrchestrator {
         scope: MemoryScope,
         limit: usize,
         prefer_project: Option<&str>,
+        exact_scope: bool,
     ) -> Result<Vec<MemoryEntry>> {
         // Embed the query exactly once (with the asymmetric query prefix), then
         // pass the SAME vector to both tiers.
@@ -349,11 +356,11 @@ impl MemoryOrchestrator {
         // Search both tiers with the shared query vector and scope filtering.
         let mut synapse_scored: Vec<ScoredMemory> = self
             .synapse
-            .retrieve_by_scope_scored(&query_vec, &scope, limit, prefer_project)
+            .retrieve_by_scope_scored(&query_vec, &scope, limit, prefer_project, exact_scope)
             .await?;
         let cortex_scored: Vec<ScoredMemory> = self
             .cortex
-            .retrieve_by_scope_scored(&query_vec, &scope, limit, prefer_project)
+            .retrieve_by_scope_scored(&query_vec, &scope, limit, prefer_project, exact_scope)
             .await?;
 
         // Merge scored results from both tiers.
@@ -883,6 +890,89 @@ mod tests {
             .expect("Failed to recall by scope");
 
         assert!(!results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_exact_scope_excludes_global_bleed() {
+        // Regression test for the "global bleed" failure mode: a low-salience
+        // scoped memory can be crowded out of the result window by a large
+        // number of high-salience global memories, even though the scoped
+        // memory is exactly what the caller asked for. exact_scope=true must
+        // restrict the candidate set to the requested scope only.
+        let dir = tempfile::tempdir().unwrap();
+        let embedder: Arc<dyn Embedder> = Arc::new(crate::embedder::MockEmbedder::new());
+        let orchestrator = MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
+            .await
+            .expect("Failed to create orchestrator");
+
+        // Flood with high-salience global memories that would otherwise
+        // outrank a low-salience scoped memory in a blended-score, limited
+        // result window.
+        for i in 0..20 {
+            orchestrator
+                .remember_with_salience(
+                    format!("high salience global noise {i}"),
+                    HashMap::new(),
+                    MemoryScope::Global,
+                    0.95,
+                )
+                .await
+                .expect("Failed to remember global noise");
+        }
+
+        // The target: a low-salience memory under a specific scope.
+        orchestrator
+            .remember_with_salience(
+                "the target plan body".to_string(),
+                HashMap::new(),
+                MemoryScope::Session("target-scope".to_string()),
+                0.1,
+            )
+            .await
+            .expect("Failed to remember target");
+
+        // Non-exact: with a small limit, the low-salience target can be (and
+        // here, is) crowded out by the flood of high-salience global noise.
+        let bleeding = orchestrator
+            .recall_by_scope_with_project(
+                "the target plan body".to_string(),
+                MemoryScope::Session("target-scope".to_string()),
+                3,
+                None,
+                false,
+            )
+            .await
+            .expect("recall_by_scope_with_project (non-exact)");
+        assert!(
+            !bleeding.iter().any(|m| m.content == "the target plan body"),
+            "test setup invariant: global noise should crowd out the target at a small limit \
+             in non-exact mode (if this now fails, the noise/limit balance above needs \
+             adjusting, not this test's intent)"
+        );
+
+        // Exact: global memories are excluded from the candidate set
+        // entirely, so the target must be found even at the same small limit.
+        let exact = orchestrator
+            .recall_by_scope_with_project(
+                "the target plan body".to_string(),
+                MemoryScope::Session("target-scope".to_string()),
+                3,
+                None,
+                true,
+            )
+            .await
+            .expect("recall_by_scope_with_project (exact)");
+        assert!(
+            exact.iter().any(|m| m.content == "the target plan body"),
+            "exact_scope=true must find the target even when global noise would otherwise \
+             crowd it out; got: {exact:?}"
+        );
+        assert!(
+            exact
+                .iter()
+                .all(|m| m.scope == MemoryScope::Session("target-scope".to_string())),
+            "exact_scope=true must not return any global-scoped memories; got: {exact:?}"
+        );
     }
 
     #[tokio::test]

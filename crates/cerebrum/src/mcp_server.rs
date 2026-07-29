@@ -234,6 +234,10 @@ impl CerebrumHandler {
                 "prefer_project": {
                     "type": "string",
                     "description": "Optional project name to gently boost matching memories in ranking (never excludes others). Defaults to the server's CEREBRUM_PROJECT."
+                },
+                "exact_scope": {
+                    "type": "boolean",
+                    "description": "When true, restrict results to memories whose scope is EXACTLY the given scope — global memories are excluded entirely rather than merely deprioritized. Use this when you already know the precise scope you want (e.g. fetching a specific plan or session by its scope id), to avoid a large corpus of high-salience global memories crowding the target out of the result window. Defaults to false."
                 }
             },
             "required": ["query", "scope"]
@@ -563,9 +567,14 @@ impl CerebrumHandler {
             .filter(|s| !s.is_empty())
             .or_else(|| self.default_project.first().cloned());
 
+        let exact_scope = args
+            .get("exact_scope")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
         match self
             .orchestrator
-            .recall_by_scope_with_project(query, scope, limit, prefer.as_deref())
+            .recall_by_scope_with_project(query, scope, limit, prefer.as_deref(), exact_scope)
             .await
         {
             Ok(results) => {
