@@ -129,6 +129,8 @@ fn parse_scope_string(scope_str: &str) -> Result<MemoryScope> {
         Ok(MemoryScope::Agent(agent_id.to_string()))
     } else if let Some(session_id) = scope_str.strip_prefix("session:") {
         Ok(MemoryScope::Session(session_id.to_string()))
+    } else if let Some(plan_id) = scope_str.strip_prefix("plan:") {
+        Ok(MemoryScope::Plan(plan_id.to_string()))
     } else {
         Err(CerebrumError::Validation(format!(
             "Invalid scope string: {}",
@@ -476,13 +478,19 @@ impl MemoryStore for LanceDBCortex {
     ///
     /// Pushes a coarse SQL predicate to LanceDB (reducing rows fetched),
     /// then applies the precise `MemoryScope::matches` logic in Rust to
-    /// handle the bidirectional Global-matches-all semantic.
+    /// handle the bidirectional Global-matches-all semantic — UNLESS
+    /// `exact_scope` is `true`, in which case both the SQL predicate and the
+    /// Rust-side filter restrict to rows whose scope is *exactly* `scope`
+    /// (global rows are excluded from the candidate set entirely, not just
+    /// deprioritized). See [`crate::traits::MemoryStore::retrieve_by_scope_scored`]
+    /// for why this matters.
     async fn retrieve_by_scope_scored(
         &self,
         query_vec: &[f32],
         scope: &MemoryScope,
         limit: usize,
         prefer_project: Option<&str>,
+        exact_scope: bool,
     ) -> Result<Vec<crate::models::ScoredMemory>> {
         use crate::models::ScoredMemory;
 
@@ -495,12 +503,22 @@ impl MemoryStore for LanceDBCortex {
             return Ok(vec![]);
         }
 
-        // Coarse SQL pushdown: global matches all, specific scopes match themselves + global.
+        // Coarse SQL pushdown: global matches all UNLESS exact_scope narrows
+        // the candidate set to the requested scope only.
         let stream = match scope {
             MemoryScope::Global => {
                 // Global scope matches everything — no filter needed.
                 table
                     .query()
+                    .execute()
+                    .await
+                    .map_err(|e| CerebrumError::Database(e.to_string()))?
+            }
+            _ if exact_scope => {
+                let predicate = format!("scope = {}", sql_quote(&scope.as_str()));
+                table
+                    .query()
+                    .only_if(predicate)
                     .execute()
                     .await
                     .map_err(|e| CerebrumError::Database(e.to_string()))?
@@ -526,9 +544,16 @@ impl MemoryStore for LanceDBCortex {
             .iter()
             .flat_map(|b| Self::batch_to_records(b).unwrap_or_default())
             .filter_map(|record| {
-                // Precise scope match in Rust (handles bidirectional Global logic).
                 let entry = record.to_entry().ok()?;
-                if !scope.matches(&entry.scope) {
+                // Precise scope match in Rust: exact-scope mode requires
+                // strict equality (excludes Global bleed); normal mode uses
+                // the bidirectional MemoryScope::matches semantic.
+                let scope_ok = if exact_scope {
+                    entry.scope == *scope
+                } else {
+                    scope.matches(&entry.scope)
+                };
+                if !scope_ok {
                     return None;
                 }
                 let sim = Self::cosine_similarity(query_vec, &record.embedding);
@@ -749,6 +774,61 @@ mod tests {
             .await
             .unwrap();
         assert!(!results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_lancedb_cortex_retrieve_by_scope_scored_exact_excludes_global() {
+        let dir = tempfile::tempdir().unwrap();
+        let cortex = LanceDBCortex::new(dir.path(), "memories", 384)
+            .await
+            .unwrap();
+
+        let global_entry = MemoryEntry::builder(MemoryId::new(), "global memory".to_string())
+            .embedding(vec![0.1; 384])
+            .tier(MemoryTier::Cortex)
+            .scope(MemoryScope::Global)
+            .salience(0.95)
+            .build();
+        let scoped_entry = MemoryEntry::builder(MemoryId::new(), "scoped memory".to_string())
+            .embedding(vec![0.1; 384])
+            .tier(MemoryTier::Cortex)
+            .scope(MemoryScope::User("user1".to_string()))
+            .salience(0.1)
+            .build();
+
+        cortex.store(global_entry).await.unwrap();
+        cortex.store(scoped_entry).await.unwrap();
+
+        // Non-exact: global is a candidate alongside the scoped entry.
+        let non_exact = cortex
+            .retrieve_by_scope_scored(
+                &qvec(),
+                &MemoryScope::User("user1".to_string()),
+                10,
+                None,
+                false,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            non_exact.len(),
+            2,
+            "non-exact mode includes global as a candidate"
+        );
+
+        // Exact: global must be excluded entirely, only the scoped entry remains.
+        let exact = cortex
+            .retrieve_by_scope_scored(
+                &qvec(),
+                &MemoryScope::User("user1".to_string()),
+                10,
+                None,
+                true,
+            )
+            .await
+            .unwrap();
+        assert_eq!(exact.len(), 1, "exact mode must exclude global entirely");
+        assert_eq!(exact[0].entry.content, "scoped memory");
     }
 
     #[tokio::test]
@@ -1038,6 +1118,7 @@ mod tests {
             MemoryScope::User("user1".to_string()),
             MemoryScope::Agent("agent1".to_string()),
             MemoryScope::Session("session1".to_string()),
+            MemoryScope::Plan("plan1".to_string()),
         ];
 
         for scope in scopes {

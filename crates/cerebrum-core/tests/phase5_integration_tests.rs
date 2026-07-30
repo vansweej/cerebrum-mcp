@@ -376,6 +376,23 @@ async fn test_memory_scope_string_representation() {
     assert_eq!(user.as_str(), "user:user1");
     assert_eq!(agent.as_str(), "agent:agent1");
     assert_eq!(session.as_str(), "session:session1");
+
+    let plan = MemoryScope::Plan("plan-123".to_string());
+    assert_eq!(plan.as_str(), "plan:plan-123");
+}
+
+#[tokio::test]
+async fn test_plan_scope_matching() {
+    let plan_a = MemoryScope::Plan("a".to_string());
+    let plan_a_dup = MemoryScope::Plan("a".to_string());
+    let plan_b = MemoryScope::Plan("b".to_string());
+    let global = MemoryScope::Global;
+
+    assert!(plan_a.matches(&plan_a_dup));
+    assert!(!plan_a.matches(&plan_b));
+    assert!(global.matches(&plan_a), "global matches everything");
+    assert!(plan_a.matches(&global), "matches is symmetric for global");
+    assert!(!plan_a.matches(&MemoryScope::Session("a".to_string())));
 }
 
 #[tokio::test]

@@ -48,6 +48,7 @@ pub enum MemoryTier {
 /// - User: Accessible only to a specific user
 /// - Agent: Accessible only to a specific agent
 /// - Session: Accessible only within a specific session
+/// - Plan: Addresses a stored plan by id (choragos plan-ref namespace)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum MemoryScope {
     /// Global scope: accessible to all agents and users.
@@ -58,6 +59,11 @@ pub enum MemoryScope {
     Agent(String),
     /// Session scope: accessible only within a specific session.
     Session(String),
+    /// Plan scope: addresses a stored plan by id (choragos plan-ref
+    /// namespace). Callers fetching a specific plan should use
+    /// `exact_scope: true` on `recall_by_scope` to avoid competing against
+    /// the global corpus for a limited result window.
+    Plan(String),
 }
 
 impl MemoryScope {
@@ -71,6 +77,7 @@ impl MemoryScope {
             (MemoryScope::User(a), MemoryScope::User(b)) => a == b,
             (MemoryScope::Agent(a), MemoryScope::Agent(b)) => a == b,
             (MemoryScope::Session(a), MemoryScope::Session(b)) => a == b,
+            (MemoryScope::Plan(a), MemoryScope::Plan(b)) => a == b,
             _ => false,
         }
     }
@@ -82,6 +89,7 @@ impl MemoryScope {
             MemoryScope::User(id) => format!("user:{}", id),
             MemoryScope::Agent(id) => format!("agent:{}", id),
             MemoryScope::Session(id) => format!("session:{}", id),
+            MemoryScope::Plan(id) => format!("plan:{}", id),
         }
     }
 }

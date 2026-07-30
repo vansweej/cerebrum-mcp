@@ -59,8 +59,10 @@ impl CerebrumHandler {
                     Ok(cerebrum_core::MemoryScope::Agent(id.to_string()))
                 } else if let Some(id) = s.strip_prefix("session:") {
                     Ok(cerebrum_core::MemoryScope::Session(id.to_string()))
+                } else if let Some(id) = s.strip_prefix("plan:") {
+                    Ok(cerebrum_core::MemoryScope::Plan(id.to_string()))
                 } else {
-                    Err("Invalid scope format. Use 'global', 'user:<id>', 'agent:<id>', or 'session:<id>'".to_string())
+                    Err("Invalid scope format. Use 'global', 'user:<id>', 'agent:<id>', 'session:<id>', or 'plan:<id>'".to_string())
                 }
             }
         }
@@ -83,7 +85,7 @@ impl CerebrumHandler {
                 },
                 "scope": {
                     "type": "string",
-                    "description": "Memory scope: 'global', 'user:<id>', 'agent:<id>', or 'session:<id>'. Defaults to 'global'."
+                    "description": "Memory scope: 'global', 'user:<id>', 'agent:<id>', 'session:<id>', or 'plan:<id>'. Defaults to 'global'."
                 },
                 "type": {
                     "type": "string",
@@ -223,7 +225,7 @@ impl CerebrumHandler {
                 },
                 "scope": {
                     "type": "string",
-                    "description": "Memory scope filter: 'global', 'user:<id>', 'agent:<id>', or 'session:<id>'"
+                    "description": "Memory scope filter: 'global', 'user:<id>', 'agent:<id>', 'session:<id>', or 'plan:<id>'"
                 },
                 "limit": {
                     "type": "integer",
@@ -234,6 +236,10 @@ impl CerebrumHandler {
                 "prefer_project": {
                     "type": "string",
                     "description": "Optional project name to gently boost matching memories in ranking (never excludes others). Defaults to the server's CEREBRUM_PROJECT."
+                },
+                "exact_scope": {
+                    "type": "boolean",
+                    "description": "When true, restrict results to memories whose scope is EXACTLY the given scope — global memories are excluded entirely rather than merely deprioritized. Use this when you already know the precise scope you want (e.g. fetching a specific plan or session by its scope id), to avoid a large corpus of high-salience global memories crowding the target out of the result window. Defaults to false."
                 }
             },
             "required": ["query", "scope"]
@@ -563,9 +569,14 @@ impl CerebrumHandler {
             .filter(|s| !s.is_empty())
             .or_else(|| self.default_project.first().cloned());
 
+        let exact_scope = args
+            .get("exact_scope")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
         match self
             .orchestrator
-            .recall_by_scope_with_project(query, scope, limit, prefer.as_deref())
+            .recall_by_scope_with_project(query, scope, limit, prefer.as_deref(), exact_scope)
             .await
         {
             Ok(results) => {
@@ -1104,6 +1115,80 @@ mod tests {
     fn test_recall_by_scope_tool_definition() {
         let tool = CerebrumHandler::recall_by_scope_tool();
         assert_eq!(tool.name, "recall_by_scope");
+    }
+
+    #[test]
+    fn test_parse_scope_plan_prefix() {
+        let scope = CerebrumHandler::parse_scope(Some("plan:abc")).expect("plan: should parse");
+        assert_eq!(scope, cerebrum_core::MemoryScope::Plan("abc".to_string()));
+    }
+
+    #[test]
+    fn test_parse_scope_invalid_prefix_still_errors() {
+        let result = CerebrumHandler::parse_scope(Some("foo:bar"));
+        assert!(
+            result.is_err(),
+            "unknown scope prefix must still be rejected"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_handle_recall_by_scope_exact_scope_excludes_global() {
+        let dir = tempfile::tempdir().unwrap();
+        let embedder: Arc<dyn cerebrum_core::Embedder> =
+            Arc::new(cerebrum_core::embedder::MockEmbedder::new());
+        let orchestrator = Arc::new(
+            MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
+                .await
+                .expect("Failed to create orchestrator"),
+        );
+        let handler = CerebrumHandler::new(orchestrator);
+
+        // Flood with high-salience global noise.
+        for i in 0..10 {
+            handler
+                .handle_remember(Some(json!({
+                    "content": format!("global noise {i}"),
+                    "salience": 0.95
+                })))
+                .await
+                .expect("remember global noise");
+        }
+
+        // Low-salience plan-scoped target.
+        handler
+            .handle_remember(Some(json!({
+                "content": "the plan body",
+                "salience": 0.1,
+                "scope": "plan:demo"
+            })))
+            .await
+            .expect("remember plan-scoped target");
+
+        let result = handler
+            .handle_recall_by_scope(Some(json!({
+                "query": "the plan body",
+                "scope": "plan:demo",
+                "limit": 3,
+                "exact_scope": true
+            })))
+            .await
+            .expect("handle_recall_by_scope with exact_scope");
+
+        let text = match &result.content[0].raw {
+            RawContent::Text(t) => t.text.clone(),
+            _ => panic!("expected text content"),
+        };
+        let parsed: Value = serde_json::from_str(&text).expect("valid JSON");
+        let results = parsed["results"].as_array().expect("results array");
+        assert!(
+            results.iter().any(|e| e["content"] == "the plan body"),
+            "exact_scope=true must find the plan-scoped target despite global noise; got: {results:?}"
+        );
+        assert!(
+            results.iter().all(|e| e["scope"] == "plan:demo"),
+            "exact_scope=true must not return any global-scoped memories; got: {results:?}"
+        );
     }
 
     #[tokio::test]

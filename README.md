@@ -314,6 +314,34 @@ Memories whose project list contains `prefer_project` receive a ranking boost (w
 
 When `prefer_project` is omitted, the server falls back to the first entry in `CEREBRUM_PROJECT` (if set).
 
+## Memory scopes
+
+Every memory has a scope, passed as a `scope` string to `remember` / `recall_by_scope`:
+
+| Scope        | Meaning                                              |
+|--------------|-------------------------------------------------------|
+| `global`     | Accessible to all agents and users (the default)      |
+| `user:<id>`  | Accessible only to a specific user                     |
+| `agent:<id>` | Accessible only to a specific agent                    |
+| `session:<id>` | Accessible only within a specific session            |
+| `plan:<id>`  | Addresses a stored plan by id (used by choragos's zero-plan-files workflow to fetch a plan body by its memory reference) |
+
+`global` matches every scope; the other scope kinds only match themselves.
+
+### Exact-scope retrieval — `exact_scope`
+
+`recall_by_scope` accepts an optional `exact_scope` boolean (default `false`). When `true`, results are restricted to memories whose scope is **exactly** the requested scope — global memories are excluded from the candidate set entirely, rather than merely deprioritised in the blended-score ranking:
+
+```json
+{
+  "query": "my-plan-id",
+  "scope": "plan:my-plan-id",
+  "exact_scope": true
+}
+```
+
+Use `exact_scope: true` whenever you already know the precise scope you want (e.g. fetching a specific plan by its `plan:<id>` scope). Without it, a large corpus of high-salience global memories can crowd a low-salience scoped memory out of the result window entirely — confirmed in practice against a production store, not just a theoretical risk.
+
 ## Troubleshooting
 
 ### Ollama Connection Issues

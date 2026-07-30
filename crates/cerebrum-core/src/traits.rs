@@ -40,12 +40,23 @@ pub trait MemoryStore: Send + Sync {
     /// The `prefer_project` parameter optionally applies a provenance project-weight
     /// multiplier to the blended score so that memories belonging to the preferred
     /// project rank higher than non-member memories.
+    ///
+    /// When `exact_scope` is `true`, the search is restricted to memories whose
+    /// scope is *exactly* `scope` — global memories are NOT included as
+    /// candidates, even though [`MemoryScope::matches`] would normally treat
+    /// Global as matching everything. This avoids the "global bleed" failure
+    /// mode where a large corpus of high-salience global memories crowds a
+    /// low-salience scoped memory out of the `limit` window entirely. Use this
+    /// when the caller already knows the precise scope it wants (e.g.
+    /// fetching a specific plan or session) rather than doing open-ended
+    /// scoped discovery.
     async fn retrieve_by_scope_scored(
         &self,
         query_vec: &[f32],
         scope: &MemoryScope,
         limit: usize,
         prefer_project: Option<&str>,
+        exact_scope: bool,
     ) -> Result<Vec<ScoredMemory>>;
 
     /// Retrieve memories matching a query vector, up to a limit.
@@ -72,7 +83,7 @@ pub trait MemoryStore: Send + Sync {
         limit: usize,
     ) -> Result<Vec<MemoryEntry>> {
         Ok(self
-            .retrieve_by_scope_scored(query_vec, scope, limit, None)
+            .retrieve_by_scope_scored(query_vec, scope, limit, None, false)
             .await?
             .into_iter()
             .map(|s| s.entry)
@@ -132,6 +143,7 @@ mod tests {
             _scope: &MemoryScope,
             _limit: usize,
             _prefer_project: Option<&str>,
+            _exact_scope: bool,
         ) -> Result<Vec<ScoredMemory>> {
             Ok(vec![])
         }

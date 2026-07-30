@@ -547,6 +547,7 @@ pub enum MemoryScope {
     User(String),        // Accessible only to specific user
     Agent(String),       // Accessible only to specific agent
     Session(String),     // Accessible only within specific session
+    Plan(String),        // Addresses a stored plan by id (choragos plan-ref namespace)
 }
 ```
 
@@ -554,6 +555,17 @@ pub enum MemoryScope {
 - Global scope matches all scopes
 - Other scopes match only if identical
 - Enables fine-grained access control
+
+**Exact-scope retrieval:** `recall_by_scope` accepts an optional
+`exact_scope: bool` argument (default `false`). When `true`, the SQL
+predicate and scope match both restrict to memories whose scope is
+*exactly* the requested scope — global memories are excluded from the
+candidate set entirely, rather than merely being deprioritized in the
+blended-score ranking. This avoids a "global bleed" failure mode where a
+large corpus of high-salience global memories crowds a low-salience scoped
+memory (e.g. a `plan:<id>` entry) out of the `limit` result window. Use
+`exact_scope: true` whenever the caller already knows the precise scope it
+wants, rather than doing open-ended scoped discovery.
 
 **MemoryEntry Extension:**
 ```rust
@@ -626,7 +638,11 @@ graph TD
     },
     "scope": {
       "type": "string",
-      "description": "Memory scope filter: 'global', 'user:<id>', 'agent:<id>', or 'session:<id>'"
+      "description": "Memory scope filter: 'global', 'user:<id>', 'agent:<id>', 'session:<id>', or 'plan:<id>'"
+    },
+    "exact_scope": {
+      "type": "boolean",
+      "description": "When true, restrict to memories whose scope is EXACTLY the given scope, excluding global memories entirely. Defaults to false."
     },
     "limit": {
       "type": "integer",

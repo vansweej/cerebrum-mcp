@@ -287,6 +287,87 @@ async fn test_integration_memory_scope_filtering() {
 }
 
 #[tokio::test]
+async fn test_integration_plan_scope_large_body_round_trip() {
+    // Gate-0-equivalent premise check (automated): a realistic multi-KB plan
+    // body stored under a plan:<id> scope must round-trip byte-identical
+    // through remember -> recall_by_scope(exact_scope: true), even in the
+    // presence of a large corpus of unrelated high-salience global memories
+    // that would otherwise crowd it out of a small result window.
+    let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder::new());
+    let dir = tempfile::tempdir().unwrap();
+    let orchestrator = MemoryOrchestrator::new(embedder, dir.path(), "memories", 384)
+        .await
+        .expect("Failed to create orchestrator");
+
+    // Build a realistic multi-KB plan body (mirrors a real dev-cycle plan
+    // file's shape: many phases/steps of prose).
+    let mut plan_body = String::from("# Feature: large plan round-trip\n\n");
+    for phase in 1..=40 {
+        plan_body.push_str(&format!(
+            "## Phase {phase}: synthetic phase {phase}\n\n\
+             Commit message: chore: synthetic commit {phase}\n\n\
+             ### Step 1: synthetic step {phase}\n\n\
+             Implementation detail {phase}: lorem ipsum dolor sit amet consectetur \
+             adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore \
+             magna aliqua ut enim ad minim veniam quis nostrud exercitation.\n\n"
+        ));
+    }
+    assert!(
+        plan_body.len() > 10_000,
+        "synthetic plan body must be realistically large, got {} bytes",
+        plan_body.len()
+    );
+
+    // Flood with high-salience global noise to reproduce the global-bleed
+    // conditions observed live.
+    for i in 0..20 {
+        orchestrator
+            .remember_with_salience(
+                format!("high salience global noise {i}"),
+                HashMap::new(),
+                MemoryScope::Global,
+                0.95,
+            )
+            .await
+            .expect("remember global noise");
+    }
+
+    orchestrator
+        .remember_with_salience(
+            plan_body.clone(),
+            HashMap::new(),
+            MemoryScope::Plan("demo-plan".to_string()),
+            0.4,
+        )
+        .await
+        .expect("remember plan body");
+
+    let results = orchestrator
+        .recall_by_scope_with_project(
+            "large plan round-trip".to_string(),
+            MemoryScope::Plan("demo-plan".to_string()),
+            5,
+            None,
+            true, // exact_scope
+        )
+        .await
+        .expect("recall_by_scope_with_project (exact)");
+
+    let found = results
+        .iter()
+        .find(|m| m.scope == MemoryScope::Plan("demo-plan".to_string()));
+    assert!(
+        found.is_some(),
+        "plan-scoped memory must be found via exact_scope despite global noise"
+    );
+    assert_eq!(
+        found.unwrap().content,
+        plan_body,
+        "recalled plan body must be byte-identical to what was stored"
+    );
+}
+
+#[tokio::test]
 async fn test_integration_concurrent_operations() {
     // Test concurrent memory operations
     let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder::new());
