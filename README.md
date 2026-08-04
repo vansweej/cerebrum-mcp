@@ -404,11 +404,11 @@ nix build .
 
 ### Data Directory
 
-The wrapped binary automatically handles the data directory:
+The server self-locates its data directory automatically — no working-directory configuration is required:
 
-- **Location:** `$XDG_DATA_HOME/cerebrum` (defaults to `~/.local/share/cerebrum`)
-- **Created on first run:** The wrapper creates the directory if it doesn't exist
-- **Database:** LanceDB stores the `memories` table at `$XDG_DATA_HOME/cerebrum/data/cerebrum/memories.lance`
+- **Location:** `~/.local/share/cerebrum/data/cerebrum` (or `$XDG_DATA_HOME/cerebrum/data/cerebrum` when `XDG_DATA_HOME` is set)
+- **Created on first run:** LanceDB creates the directory automatically on first write
+- **Database:** LanceDB stores the `memories` table at `~/.local/share/cerebrum/data/cerebrum/memories.lance`
 
 ### Home-Manager Integration
 

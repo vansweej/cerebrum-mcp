@@ -156,13 +156,14 @@ This is a **manual, non-automated** process, excluded from CI. It is useful for 
 
 ### LanceDB On-Disk Store
 
-Cerebrum's Cortex tier stores data in a LanceDB database on disk. The database path is **CWD-relative** by default: `./data/cerebrum`. This means:
+Cerebrum's Cortex tier stores data in a LanceDB database on disk. The server **self-locates its data directory automatically** — no working-directory configuration is required:
 
-- The MCP server's working directory must be set to a durable location (e.g., `~/.local/share/cerebrum`).
+- **Default path:** `~/.local/share/cerebrum/data/cerebrum` (resolved from `$HOME/.local/share/cerebrum/data/cerebrum`).
+- **XDG override:** when `XDG_DATA_HOME` is set and non-empty, the path becomes `$XDG_DATA_HOME/cerebrum/data/cerebrum`.
 - LanceDB creates the directory automatically on first write; no manual `mkdir` is needed.
 - Data persists across process restarts as long as the directory is not deleted.
 
-**Source:** `crates/cerebrum-core/src/config.rs:Config::default()` — `db_path: PathBuf::from("./data/cerebrum")`.
+**Source:** `crates/cerebrum-core/src/config.rs:default_data_dir()` — resolves via `XDG_DATA_HOME` → `HOME/.local/share` → relative fallback.
 
 ### Embedding Dimension Validation
 
