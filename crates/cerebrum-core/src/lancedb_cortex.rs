@@ -665,10 +665,19 @@ mod tests {
     async fn test_lancedb_cortex_new_creates_nested_directory() {
         let dir = tempfile::tempdir().unwrap();
         let nested = dir.path().join("a").join("b").join("c");
-        assert!(!nested.exists(), "nested path must not exist before the test");
+        assert!(
+            !nested.exists(),
+            "nested path must not exist before the test"
+        );
         let result = LanceDBCortex::new(&nested, "memories", 384).await;
-        assert!(result.is_ok(), "LanceDBCortex::new should succeed for a nested path");
-        assert!(nested.exists(), "LanceDBCortex::new must create the nested directory");
+        assert!(
+            result.is_ok(),
+            "LanceDBCortex::new should succeed for a nested path"
+        );
+        assert!(
+            nested.exists(),
+            "LanceDBCortex::new must create the nested directory"
+        );
     }
 
     #[tokio::test]
