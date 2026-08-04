@@ -32,22 +32,14 @@
           cargoBuildFlags = [ "-p" "cerebrum" ];
           doCheck = false;
         };
-
-        cerebrum-wrapped = pkgs.writeShellApplication {
-          name = "cerebrum";
-          runtimeInputs = [ cerebrum ];
-          text = ''
-            DATA_DIR="''${XDG_DATA_HOME:-$HOME/.local/share}/cerebrum"
-            mkdir -p "$DATA_DIR"
-            cd "$DATA_DIR"
-            exec cerebrum "$@"
-          '';
-        };
       in
       {
-        packages.default = cerebrum-wrapped;
+        # `cerebrum` self-locates its data directory in-binary (see
+        # crates/cerebrum-core/src/config.rs's `default_data_dir`, which
+        # resolves XDG_DATA_HOME/HOME to the same path the former wrapper's
+        # `cd` produced), so no wrapper script is needed to set cwd anymore.
+        packages.default = cerebrum;
         packages.cerebrum = cerebrum;
-        packages.cerebrum-wrapped = cerebrum-wrapped;
 
         devShells.default = pkgs.mkShell {
           buildInputs = with pkgs; [

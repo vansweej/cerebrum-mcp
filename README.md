@@ -392,13 +392,10 @@ ollama pull nomic-embed-text
 The flake provides reproducible builds via `rustPlatform.buildRustPackage`:
 
 ```bash
-# Build the bare binary
+# Build the binary (self-locates its data directory; no wrapper needed)
 nix build .#cerebrum
 
-# Build the wrapped binary (recommended)
-nix build .#cerebrum-wrapped
-
-# Build the default output (wrapped)
+# Build the default output (same binary)
 nix build .
 ```
 
