@@ -186,6 +186,10 @@ pub struct LanceDBCortex {
 impl LanceDBCortex {
     /// Open (or create) the memories table at `db_path`.
     ///
+    /// Creates the directory (and any missing parents) if it does not already
+    /// exist before connecting to LanceDB, so callers never need to create the
+    /// directory themselves.
+    ///
     /// Mirrors athenaeum `Store::open`. The store operates purely on vectors —
     /// it holds no embedder. The orchestrator owns the embedder and validates
     /// the embedding dimension against `dim` before constructing the store.
@@ -195,6 +199,9 @@ impl LanceDBCortex {
     /// * `table_name` – Name of the table within the database.
     /// * `dim`        – Expected embedding dimension for the table schema.
     pub async fn new(db_path: &Path, table_name: &str, dim: usize) -> Result<Self> {
+        std::fs::create_dir_all(db_path)
+            .map_err(|e| CerebrumError::Database(format!("Failed to create db_path: {}", e)))?;
+
         let path = db_path
             .to_str()
             .ok_or_else(|| CerebrumError::Database("non-UTF-8 db_path".to_string()))?;
@@ -652,6 +659,25 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let result = LanceDBCortex::new(dir.path(), "memories", 384).await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_lancedb_cortex_new_creates_nested_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let nested = dir.path().join("a").join("b").join("c");
+        assert!(
+            !nested.exists(),
+            "nested path must not exist before the test"
+        );
+        let result = LanceDBCortex::new(&nested, "memories", 384).await;
+        assert!(
+            result.is_ok(),
+            "LanceDBCortex::new should succeed for a nested path"
+        );
+        assert!(
+            nested.exists(),
+            "LanceDBCortex::new must create the nested directory"
+        );
     }
 
     #[tokio::test]
