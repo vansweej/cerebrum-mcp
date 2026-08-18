@@ -197,38 +197,36 @@ impl Embedder for FastEmbedEmbedder {
             input: vec![text.to_string()],
         };
 
-        let result = self
-            .client
-            .post(&url)
-            .json(&request)
-            .send()
-            .await
-            .map_err(|e| {
-                CerebrumError::Embedding(format!(
-                    "Failed to connect to Ollama at {}: {}",
-                    self.endpoint, e
-                ))
-            })
-            .and_then(|response| {
-                if !response.status().is_success() {
-                    return Err(CerebrumError::Embedding(format!(
-                        "Ollama API error: {}",
-                        response.status()
-                    )));
-                }
-                Ok(response)
-            });
+        let result = self.client.post(&url).json(&request).send().await;
 
         let response = match result {
             Ok(resp) => resp,
             Err(e) => {
-                // Record failure and update circuit breaker
                 let duration_ms = start_time.elapsed().as_millis() as u64;
                 self.metrics.record_failure(duration_ms);
                 self.circuit_breaker.record_failure();
-                return Err(e);
+                return Err(CerebrumError::Embedding(format!(
+                    "Failed to connect to Ollama at {}: {e}",
+                    self.endpoint
+                )));
             }
         };
+
+        let status = response.status();
+        if !status.is_success() {
+            let raw = response.text().await.unwrap_or_default();
+            let mut end = raw.len().min(2048);
+            while end > 0 && !raw.is_char_boundary(end) {
+                end -= 1;
+            }
+            let body = &raw[..end];
+            let duration_ms = start_time.elapsed().as_millis() as u64;
+            self.metrics.record_failure(duration_ms);
+            self.circuit_breaker.record_failure();
+            return Err(CerebrumError::Embedding(format!(
+                "Ollama API error: {status}: {body}"
+            )));
+        }
 
         let embed_response: OllamaEmbedResponse = response.json().await.map_err(|e| {
             let duration_ms = start_time.elapsed().as_millis() as u64;
