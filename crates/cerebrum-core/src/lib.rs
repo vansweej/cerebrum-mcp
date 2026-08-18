@@ -4,6 +4,7 @@ pub mod embedder;
 pub mod error;
 pub mod fastembed_embedder;
 pub mod input_bound;
+pub mod env_overlay;
 pub mod lancedb_cortex;
 pub mod migration;
 pub mod models;
