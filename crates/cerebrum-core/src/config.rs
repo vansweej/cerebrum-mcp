@@ -106,7 +106,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             db_path: default_data_dir(),
-            table_name: "memories".to_string(),
+            table_name: "memories_qwen3".to_string(),
             embedding_dim: 1024,
             max_input_chars: 96_000,
             ollama_url: "http://localhost:11434".to_string(),
@@ -199,8 +199,8 @@ mod tests {
     // ── existing Config field tests ──────────────────────────────────────────
 
     #[test]
-    fn default_table_name_is_memories() {
-        assert_eq!(Config::default().table_name, "memories");
+    fn default_table_name_is_memories_qwen3() {
+        assert_eq!(Config::default().table_name, "memories_qwen3");
     }
 
     #[test]
