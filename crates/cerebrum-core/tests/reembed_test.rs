@@ -142,7 +142,7 @@ async fn long_content_is_counted_as_truncated() {
         .await
         .unwrap();
 
-    let long_content = "a".repeat(96_000);
+    let long_content = "a".repeat(96_001);
     let entry = MemoryEntry::builder(MemoryId::new(), long_content)
         .embedding(vec![0.1_f32; 768])
         .tier(MemoryTier::Cortex)
