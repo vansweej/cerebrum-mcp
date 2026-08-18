@@ -13,7 +13,7 @@ A two-tier agent memory subsystem implemented as a single Model Context Protocol
 ### Phase 6: Production Hardening & LanceDB Integration
 
 #### Real Ollama Integration
-- **Semantic Embeddings:** Real embeddings via Ollama HTTP API (nomic-embed-text model)
+- **Semantic Embeddings:** Real embeddings via Ollama HTTP API (`qwen3-embedding:0.6b` model, 1024-dim, 32768-token context)
 - **384-Dimensional Vectors:** Optimized for semantic similarity search
 - **Automatic Fallback:** Graceful degradation when Ollama is unavailable
 - **Configurable Endpoint:** Support for custom Ollama server locations
@@ -53,8 +53,8 @@ A two-tier agent memory subsystem implemented as a single Model Context Protocol
    # Start the Ollama server
    ollama serve
    
-   # In another terminal, pull the nomic-embed-text model
-   ollama pull nomic-embed-text
+   # In another terminal, pull the qwen3-embedding model
+   ollama pull qwen3-embedding:0.6b
    ```
 
 2. **Rust & Nix** (for development)
@@ -72,8 +72,8 @@ A two-tier agent memory subsystem implemented as a single Model Context Protocol
    # Start the Ollama server
    ollama serve
    
-   # In another terminal, pull the nomic-embed-text model
-   ollama pull nomic-embed-text
+   # In another terminal, pull the qwen3-embedding model
+   ollama pull qwen3-embedding:0.6b
    ```
 
 2. **Rust & Nix** (for development)
@@ -86,8 +86,8 @@ A two-tier agent memory subsystem implemented as a single Model Context Protocol
 **Ollama is a lazy dependency** for production deployments. The system initializes without contacting Ollama:
 
 - **Ollama Server:** Contacted on first `remember()` or `recall()` call at `http://localhost:11434` (configurable via `Config.ollama_url`)
-- **Embedding Model:** `nomic-embed-text` must be pulled: `ollama pull nomic-embed-text`
-- **Embedding Dimension:** 768-dimensional vectors (nomic-embed-text standard)
+- **Embedding Model:** `qwen3-embedding:0.6b` must be pulled: `ollama pull qwen3-embedding:0.6b`
+- **Embedding Dimension:** 1024-dimensional vectors (qwen3-embedding:0.6b, 32768-token context)
 - **Connection Timeout:** 5 seconds (configurable via `Config.embed_connect_timeout`)
 - **Request Timeout:** 60 seconds (configurable via `Config.embed_timeout`)
 
@@ -95,34 +95,37 @@ A two-tier agent memory subsystem implemented as a single Model Context Protocol
 
 ### Semantic Search Prefixes
 
-Cerebrum applies asymmetric search prefixes (nomic best practice) to improve semantic search quality:
+Cerebrum uses empty document and query prefixes by default with `qwen3-embedding:0.6b`
+(the model performs well without asymmetric prefix tuning). Prefixes are opt-in and
+tunable at runtime via `CEREBRUM_QUERY_PREFIX` and `CEREBRUM_DOCUMENT_PREFIX`, or via
+`Config.query_prefix` / `Config.document_prefix`.
 
-- **Document Prefix:** `"search_document: "` - prepended to stored memory content before embedding
-- **Query Prefix:** `"search_query: "` - prepended to search queries before embedding
-
-These prefixes are configurable via `Config.query_prefix` and `Config.document_prefix`. The orchestrator applies them automatically before embedding; the original text is stored in `MemoryEntry.content`.
+The orchestrator applies them automatically before embedding; the original text is
+stored in `MemoryEntry.content`.
 
 Example:
 ```rust
-// Config with custom prefixes
+// Config with custom prefixes (optional)
 let config = Config {
-    query_prefix: "search_query: ".to_string(),
-    document_prefix: "search_document: ".to_string(),
+    query_prefix: String::new(),
+    document_prefix: String::new(),
     ..Default::default()
 };
 
 // When remember("user preferences") is called:
-// 1. Orchestrator embeds: "search_document: user preferences"
+// 1. Orchestrator embeds: "user preferences" (document_prefix is empty)
 // 2. MemoryEntry stores: "user preferences" (original text)
 
 // When recall("preferences") is called:
-// 1. Orchestrator embeds: "search_query: preferences"
+// 1. Orchestrator embeds: "preferences" (query_prefix is empty)
 // 2. Both Synapse and Cortex search using the query vector
 ```
 
 ### Schema Migration
 
-**⚠️ Important:** Changing `embedding_dim` requires wiping the LanceDB schema.
+**⚠️ Important:** Upgrading from a previous embedding model requires migrating your
+LanceDB store. See `docs/runbooks/reembed-migration.md` for the full guide using
+`cerebrum-reembed`.
 
 The LanceDB table schema is fixed at creation time. If you change `Config.embedding_dim` (e.g., from 384 to 768), the old schema is incompatible and must be wiped:
 
@@ -135,19 +138,12 @@ rm -rf ~/.local/share/cerebrum/data/cerebrum/
 
 **Migration Scenarios:**
 
-1. **Upgrading from 384-dim to 768-dim (nomic-embed-text):**
-   ```bash
-   # 1. Stop Cerebrum
-   # 2. Wipe old schema
-   rm -rf ~/.local/share/cerebrum/data/cerebrum/
-   # 3. Update Config.embedding_dim to 768
-   # 4. Restart Cerebrum (new table created automatically)
-   # 5. Memories are lost; re-populate via remember() calls
-   ```
+1. **Upgrading from nomic-embed-text (768-dim) to qwen3-embedding:0.6b (1024-dim):**
+   See `docs/runbooks/reembed-migration.md` for a lossless migration using `cerebrum-reembed`.
 
 2. **Changing Ollama model:**
-   - If the new model has a different dimension, follow the schema wipe procedure above
-   - If the new model has the same dimension, no schema wipe is needed
+   - If the new model has a different dimension, use `cerebrum-reembed` (see runbook)
+   - If the new model has the same dimension, no schema migration is needed
    - Use the migration tooling (Reembed/Preserve/Hybrid strategies) to re-embed existing memories
 
 3. **Preserving memories during migration:**
@@ -356,11 +352,11 @@ curl http://localhost:11434/api/tags
 # 2. If not running, start it
 ollama serve
 
-# 3. Verify nomic-embed-text model is available
+# 3. Verify qwen3-embedding model is available
 ollama list
 
 # 4. If not available, pull it
-ollama pull nomic-embed-text
+ollama pull qwen3-embedding:0.6b
 ```
 
 ### Circuit Breaker Open
@@ -447,7 +443,7 @@ Then configure your MCP client (e.g., Claude Desktop) to use the `cerebrum` bina
 ### Runtime Requirements
 
 - **Ollama Server:** Required at runtime; contacted lazily on first `remember()` or `recall()` call
-- **Embedding Model:** `nomic-embed-text` must be pulled: `ollama pull nomic-embed-text`
+- **Embedding Model:** `qwen3-embedding:0.6b` must be pulled: `ollama pull qwen3-embedding:0.6b`
 - **Writable data directory:** The wrapper ensures data persists to `$XDG_DATA_HOME/cerebrum`
 
 ### Build Dependencies

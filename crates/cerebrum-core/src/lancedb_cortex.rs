@@ -163,7 +163,7 @@ fn parse_scope_string(scope_str: &str) -> Result<MemoryScope> {
 /// - `timestamp`: Creation time (ISO 8601)
 /// - `source_session_id`: Session where memory originated
 /// - `scope`: Memory visibility (Global, User, Agent, Session)
-/// - `embedding`: 768-dimensional vector (nomic-embed-text)
+/// - `embedding`: 1024-dimensional vector (qwen3-embedding:0.6b)
 /// - `metadata_json`: Arbitrary metadata as JSON
 ///
 /// **Important:** Changing `embedding_dim` requires wiping the table schema.
@@ -178,7 +178,7 @@ pub struct LanceDBCortex {
     conn: Connection,
     /// Table name for storing memories (default: "memories").
     table_name: String,
-    /// Embedding dimension (768 for nomic-embed-text).
+    /// Embedding dimension (1024 for qwen3-embedding:0.6b).
     /// Must match the dimension of vectors passed to `retrieve()`.
     embedding_dim: usize,
 }

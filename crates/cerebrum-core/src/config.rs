@@ -80,7 +80,7 @@ pub struct Config {
     pub db_path: PathBuf,
     /// Name of the LanceDB table that holds memories.
     pub table_name: String,
-    /// Expected dimension of the embedding vectors (768 for nomic-embed-text).
+    /// Expected dimension of the embedding vectors (1024 for qwen3-embedding:0.6b).
     pub embedding_dim: usize,
     /// Maximum number of characters to send to the embedder per call.
     ///
@@ -92,9 +92,9 @@ pub struct Config {
     pub ollama_url: String,
     /// Name of the Ollama embedding model to use.
     pub embed_model: String,
-    /// Prefix prepended to queries before embedding (nomic asymmetric search).
+    /// Prefix prepended to queries before embedding (opt-in; tunable via `CEREBRUM_QUERY_PREFIX`).
     pub query_prefix: String,
-    /// Prefix prepended to documents before embedding (nomic asymmetric search).
+    /// Prefix prepended to documents before embedding (empty by default for qwen3-embedding).
     pub document_prefix: String,
     /// Total deadline for the Ollama embed request (connect + response).
     pub embed_timeout: Duration,
@@ -107,12 +107,12 @@ impl Default for Config {
         Self {
             db_path: default_data_dir(),
             table_name: "memories".to_string(),
-            embedding_dim: 768,
+            embedding_dim: 1024,
             max_input_chars: 96_000,
             ollama_url: "http://localhost:11434".to_string(),
-            embed_model: "nomic-embed-text".to_string(),
-            query_prefix: "search_query: ".to_string(),
-            document_prefix: "search_document: ".to_string(),
+            embed_model: "qwen3-embedding:0.6b".to_string(),
+            query_prefix: String::new(),
+            document_prefix: String::new(),
             embed_timeout: DEFAULT_EMBED_TIMEOUT,
             embed_connect_timeout: DEFAULT_EMBED_CONNECT_TIMEOUT,
         }
@@ -205,7 +205,7 @@ mod tests {
 
     #[test]
     fn default_embedding_dim_is_768() {
-        assert_eq!(Config::default().embedding_dim, 768);
+        assert_eq!(Config::default().embedding_dim, 1024);
     }
 
     #[test]
@@ -215,6 +215,6 @@ mod tests {
 
     #[test]
     fn default_embed_model_is_nomic() {
-        assert_eq!(Config::default().embed_model, "nomic-embed-text");
+        assert_eq!(Config::default().embed_model, "qwen3-embedding:0.6b");
     }
 }
