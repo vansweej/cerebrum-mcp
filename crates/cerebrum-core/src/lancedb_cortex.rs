@@ -258,8 +258,24 @@ impl LanceDBCortex {
     }
 
     /// Calculate cosine similarity between two vectors.
+    ///
+    /// On a non-empty length mismatch the function warns once per process
+    /// (via a `std::sync::Once` guard) and returns `0.0`, so a mixed-dimension
+    /// table degrades loudly-but-once rather than flooding the logs. An empty
+    /// input returns `0.0` silently.
     fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
-        if a.len() != b.len() || a.is_empty() {
+        if a.is_empty() {
+            return 0.0;
+        }
+        if a.len() != b.len() {
+            static WARN_ONCE: std::sync::Once = std::sync::Once::new();
+            let query = a.len();
+            let stored = b.len();
+            WARN_ONCE.call_once(|| {
+                tracing::warn!(
+                    "cosine_similarity dimension mismatch: query={query} stored={stored} — table may need cerebrum-reembed"
+                );
+            });
             return 0.0;
         }
         let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
@@ -707,6 +723,20 @@ mod tests {
             second.is_ok(),
             "re-opening an existing table at the matching dim must succeed"
         );
+    }
+
+    #[test]
+    fn test_cosine_similarity_dim_mismatch_returns_zero() {
+        let a = vec![0.1_f32; 4];
+        let b = vec![0.1_f32; 8];
+        assert_eq!(LanceDBCortex::cosine_similarity(&a, &b), 0.0);
+    }
+
+    #[test]
+    fn test_cosine_similarity_empty_returns_zero() {
+        let a: Vec<f32> = Vec::new();
+        let b = vec![0.1_f32; 4];
+        assert_eq!(LanceDBCortex::cosine_similarity(&a, &b), 0.0);
     }
 
     #[tokio::test]
