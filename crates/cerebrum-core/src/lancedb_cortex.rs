@@ -225,6 +225,20 @@ impl LanceDBCortex {
                 .map_err(|e| CerebrumError::Database(format!("Failed to create table: {}", e)))?;
         }
 
+        // Fail-closed dimension guard: if the table already existed, probe its
+        // actual embedding width and refuse to open it when it disagrees with
+        // the requested `dim`. Prevents silently operating on a wrong-dimension
+        // table (e.g. an old 768-dim `memories` table while the embedder now
+        // produces 1024-dim vectors). A freshly created table probes as its
+        // requested `dim`; an absent table (None) is skipped.
+        if let Some(stored) = crate::schema_probe::read_embedding_width(&conn, table_name).await? {
+            if stored != dim {
+                return Err(CerebrumError::Validation(format!(
+                    "table '{table_name}' stores {stored}-dim embeddings but this process expects {dim}-dim; run `cerebrum-reembed` and set CEREBRUM_TABLE_NAME to the migrated table"
+                )));
+            }
+        }
+
         Ok(Self {
             conn,
             table_name: table_name.to_string(),
@@ -659,6 +673,40 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let result = LanceDBCortex::new(dir.path(), "memories", 384).await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_lancedb_cortex_new_rejects_dim_mismatch() {
+        let dir = tempfile::tempdir().unwrap();
+        // First construction creates a 768-dim table.
+        let first = LanceDBCortex::new(dir.path(), "memories", 768).await;
+        assert!(first.is_ok(), "creating a fresh 768-dim table must succeed");
+
+        // Second construction on the SAME dir + table at 1024 must fail closed.
+        let second = LanceDBCortex::new(dir.path(), "memories", 1024).await;
+        match second {
+            Ok(_) => panic!("expected a dimension-mismatch Validation error, got Ok"),
+            Err(CerebrumError::Validation(msg)) => {
+                assert!(
+                    msg.contains("cerebrum-reembed"),
+                    "validation message must mention cerebrum-reembed, got: {msg}"
+                );
+            }
+            Err(other) => panic!("expected Validation error, got: {other}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_lancedb_cortex_new_reopens_matching_dim() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = LanceDBCortex::new(dir.path(), "memories", 768).await;
+        assert!(first.is_ok());
+        // Re-opening the existing 768-dim table at the same dim must succeed.
+        let second = LanceDBCortex::new(dir.path(), "memories", 768).await;
+        assert!(
+            second.is_ok(),
+            "re-opening an existing table at the matching dim must succeed"
+        );
     }
 
     #[tokio::test]
