@@ -12,6 +12,7 @@ serde_json = "1.0"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 anyhow = "1.0"
+lancedb = "0.30"
 
 [dev-dependencies]
 tokio-test = "0.4"
@@ -20,6 +21,10 @@ tempfile = "3"
 [[bin]]
 name = "cerebrum"
 path = "src/main.rs"
+
+[[bin]]
+name = "cerebrum-reembed"
+path = "src/bin/reembed.rs"
 
 [profile.test]
 opt-level = 1
