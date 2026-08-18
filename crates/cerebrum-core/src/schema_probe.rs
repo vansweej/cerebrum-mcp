@@ -33,11 +33,10 @@ pub async fn read_embedding_width(conn: &Connection, table_name: &str) -> Result
         return Ok(None);
     }
 
-    let table = conn
-        .open_table(table_name)
-        .execute()
-        .await
-        .map_err(|e| CerebrumError::Persistence(format!("open_table({table_name}) failed: {e}")))?;
+    let table =
+        conn.open_table(table_name).execute().await.map_err(|e| {
+            CerebrumError::Persistence(format!("open_table({table_name}) failed: {e}"))
+        })?;
 
     let schema = table
         .schema()
@@ -57,4 +56,3 @@ pub async fn read_embedding_width(conn: &Connection, table_name: &str) -> Result
         ))),
     }
 }
-

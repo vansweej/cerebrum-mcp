@@ -61,7 +61,11 @@ pub async fn ensure_manifest(conn: &Connection, data_dir: &Path, config: &Config
         None => {
             if let Some(ref m) = existing_manifest {
                 if m.dim != config.embedding_dim {
-                    return Err(mismatch_err(&config.table_name, m.dim, config.embedding_dim));
+                    return Err(mismatch_err(
+                        &config.table_name,
+                        m.dim,
+                        config.embedding_dim,
+                    ));
                 }
             }
             manifest::write_manifest(

@@ -12,9 +12,9 @@ use tempfile::TempDir;
 
 use cerebrum_core::config::Config;
 use cerebrum_core::ensure_manifest::ensure_manifest;
+use cerebrum_core::error::CerebrumError;
 use cerebrum_core::manifest::{manifest_path, read_manifest, write_manifest, Manifest};
 use cerebrum_core::schema_probe::read_embedding_width;
-use cerebrum_core::error::CerebrumError;
 
 /// Build a minimal Arrow schema for a table with the given embedding dimension.
 fn make_schema(dim: usize) -> Arc<Schema> {
@@ -43,7 +43,10 @@ async fn open_conn(path: &Path) -> lancedb::Connection {
 async fn manifest_round_trip() {
     let dir = TempDir::new().unwrap();
     let path = manifest_path(dir.path(), "memories");
-    let m = Manifest { model: "nomic-embed-text".to_string(), dim: 768 };
+    let m = Manifest {
+        model: "nomic-embed-text".to_string(),
+        dim: 768,
+    };
     write_manifest(&path, &m).unwrap();
     let read = read_manifest(&path).unwrap();
     assert_eq!(read, Some(m));
@@ -124,9 +127,17 @@ async fn dim_mismatch_returns_validation_error() {
     config.embedding_dim = 1024;
     config.embed_model = "qwen3-embedding:0.6b".to_string();
 
-    let err = ensure_manifest(&conn, dir.path(), &config).await.unwrap_err();
+    let err = ensure_manifest(&conn, dir.path(), &config)
+        .await
+        .unwrap_err();
     let msg = err.to_string();
-    assert!(msg.contains("cerebrum-reembed"), "error must mention cerebrum-reembed: {msg}");
-    assert!(msg.contains("CEREBRUM_TABLE_NAME"), "error must mention CEREBRUM_TABLE_NAME: {msg}");
+    assert!(
+        msg.contains("cerebrum-reembed"),
+        "error must mention cerebrum-reembed: {msg}"
+    );
+    assert!(
+        msg.contains("CEREBRUM_TABLE_NAME"),
+        "error must mention CEREBRUM_TABLE_NAME: {msg}"
+    );
     assert!(matches!(err, CerebrumError::Validation(_)));
 }

@@ -193,8 +193,7 @@ impl Embedder for FastEmbedEmbedder {
         // Check circuit breaker before making request
         self.circuit_breaker.allow_request()?;
 
-        let (bounded, _was_truncated) =
-            crate::input_bound::bound_input(text, self.max_input_chars);
+        let (bounded, _was_truncated) = crate::input_bound::bound_input(text, self.max_input_chars);
 
         let url = format!("{}/api/embed", self.endpoint);
 

@@ -62,6 +62,10 @@ pub fn read_manifest(path: &Path) -> Result<Option<Manifest>> {
 pub fn write_manifest(path: &Path, m: &Manifest) -> Result<()> {
     let text = serde_json::to_string_pretty(m)
         .map_err(|e| CerebrumError::Persistence(format!("failed to serialise manifest: {e}")))?;
-    fs::write(path, text)
-        .map_err(|e| CerebrumError::Persistence(format!("failed to write manifest to {}: {e}", path.display())))
+    fs::write(path, text).map_err(|e| {
+        CerebrumError::Persistence(format!(
+            "failed to write manifest to {}: {e}",
+            path.display()
+        ))
+    })
 }
