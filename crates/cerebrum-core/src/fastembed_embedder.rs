@@ -88,6 +88,8 @@ pub struct FastEmbedEmbedder {
     /// Circuit breaker for handling transient failures.
     /// Opens after 5 consecutive failures, transitions to HalfOpen after 60 seconds.
     circuit_breaker: Arc<CircuitBreaker>,
+    /// Maximum number of characters to send per embed call (head-only bounding).
+    max_input_chars: usize,
 }
 
 impl FastEmbedEmbedder {
@@ -143,6 +145,7 @@ impl FastEmbedEmbedder {
             client,
             metrics: Arc::new(OperationMetrics::new()),
             circuit_breaker: Arc::new(CircuitBreaker::new(CircuitBreakerConfig::new())),
+            max_input_chars: crate::input_bound::MAX_EMBED_INPUT_CHARS,
         }
     }
 
@@ -190,11 +193,14 @@ impl Embedder for FastEmbedEmbedder {
         // Check circuit breaker before making request
         self.circuit_breaker.allow_request()?;
 
+        let (bounded, _was_truncated) =
+            crate::input_bound::bound_input(text, self.max_input_chars);
+
         let url = format!("{}/api/embed", self.endpoint);
 
         let request = OllamaEmbedRequest {
             model: self.model.clone(),
-            input: vec![text.to_string()],
+            input: vec![bounded.to_string()],
         };
 
         let result = self.client.post(&url).json(&request).send().await;

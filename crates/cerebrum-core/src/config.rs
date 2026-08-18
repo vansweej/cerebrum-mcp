@@ -82,6 +82,12 @@ pub struct Config {
     pub table_name: String,
     /// Expected dimension of the embedding vectors (768 for nomic-embed-text).
     pub embedding_dim: usize,
+    /// Maximum number of characters to send to the embedder per call.
+    ///
+    /// Inputs longer than this limit are head-truncated before embedding.
+    /// The raw `content` is always stored verbatim; only the index vector
+    /// is affected. Default: 96,000 characters (~24k tokens).
+    pub max_input_chars: usize,
     /// Base URL of the local Ollama instance (no trailing slash).
     pub ollama_url: String,
     /// Name of the Ollama embedding model to use.
@@ -102,6 +108,7 @@ impl Default for Config {
             db_path: default_data_dir(),
             table_name: "memories".to_string(),
             embedding_dim: 768,
+            max_input_chars: 96_000,
             ollama_url: "http://localhost:11434".to_string(),
             embed_model: "nomic-embed-text".to_string(),
             query_prefix: "search_query: ".to_string(),
