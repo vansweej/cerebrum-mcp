@@ -33,8 +33,8 @@ async fn main() {
 async fn run() -> anyhow::Result<()> {
     let config = apply_env_overlay(Config::default());
 
-    let src_table = std::env::var("CEREBRUM_SOURCE_TABLE")
-        .unwrap_or_else(|_| "memories".to_string());
+    let src_table =
+        std::env::var("CEREBRUM_SOURCE_TABLE").unwrap_or_else(|_| "memories".to_string());
     let dest_table = config.table_name.clone();
 
     // Resolve source dimension from schema probe, falling back to source manifest.
@@ -48,7 +48,8 @@ async fn run() -> anyhow::Result<()> {
         .await
         .map_err(|e| anyhow::anyhow!("Failed to connect to LanceDB: {e}"))?;
 
-    let probed_dim = read_embedding_width(&conn, &src_table).await
+    let probed_dim = read_embedding_width(&conn, &src_table)
+        .await
         .map_err(|e| anyhow::anyhow!("Schema probe failed: {e}"))?;
 
     let src_manifest_path = manifest::manifest_path(db_path, &src_table);
@@ -66,7 +67,10 @@ async fn run() -> anyhow::Result<()> {
         }
     };
 
-    let src_model = src_manifest.as_ref().map(|m| m.model.as_str()).unwrap_or("unknown");
+    let src_model = src_manifest
+        .as_ref()
+        .map(|m| m.model.as_str())
+        .unwrap_or("unknown");
 
     // No-op refusal (ADR A8): refuse a same-model, same-dim migration unless forced.
     if src_dim == config.embedding_dim

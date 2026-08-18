@@ -29,6 +29,8 @@ async fn test_from_config_with_mocked_ollama() {
         .await;
 
     let mut config = Config::default();
+    config.embedding_dim = 768;
+    config.embed_model = "test-model".to_string();
     config.ollama_url = mock_server.uri();
 
     let orchestrator = MemoryOrchestrator::from_config(&config).await;
@@ -63,6 +65,8 @@ async fn test_dimension_mismatch_errors_on_first_embed_not_from_config() {
         .await;
 
     let mut config = Config::default();
+    config.embedding_dim = 768;
+    config.embed_model = "test-model".to_string();
     config.ollama_url = mock_server.uri();
 
     let orchestrator = MemoryOrchestrator::from_config(&config).await;
@@ -102,6 +106,8 @@ async fn test_remember_applies_document_prefix() {
         .await;
 
     let mut config = Config::default();
+    config.embedding_dim = 768;
+    config.embed_model = "test-model".to_string();
     config.ollama_url = mock_server.uri();
     config.document_prefix = "search_document: ".to_string();
 
@@ -146,6 +152,8 @@ async fn test_recall_applies_query_prefix() {
         .await;
 
     let mut config = Config::default();
+    config.embedding_dim = 768;
+    config.embed_model = "test-model".to_string();
     config.ollama_url = mock_server.uri();
     config.query_prefix = "search_query: ".to_string();
 
@@ -184,6 +192,8 @@ async fn test_remember_stores_in_synapse() {
         .await;
 
     let mut config = Config::default();
+    config.embedding_dim = 768;
+    config.embed_model = "test-model".to_string();
     config.ollama_url = mock_server.uri();
 
     let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
@@ -245,6 +255,8 @@ async fn test_recall_returns_from_both_tiers() {
         .await;
 
     let mut config = Config::default();
+    config.embedding_dim = 768;
+    config.embed_model = "test-model".to_string();
     config.ollama_url = mock_server.uri();
 
     let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
@@ -307,6 +319,8 @@ async fn test_recall_by_scope_filters_correctly() {
         .await;
 
     let mut config = Config::default();
+    config.embedding_dim = 768;
+    config.embed_model = "test-model".to_string();
     config.ollama_url = mock_server.uri();
 
     let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
@@ -363,6 +377,8 @@ async fn test_synapse_offline_no_ollama_calls() {
         .await;
 
     let mut config = Config::default();
+    config.embedding_dim = 768;
+    config.embed_model = "test-model".to_string();
     config.ollama_url = mock_server.uri();
 
     let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
@@ -421,6 +437,8 @@ async fn test_end_session_clears_synapse_and_promotes() {
         .await;
 
     let mut config = Config::default();
+    config.embedding_dim = 768;
+    config.embed_model = "test-model".to_string();
     config.ollama_url = mock_server.uri();
 
     let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
@@ -486,6 +504,8 @@ async fn test_forget_removes_from_both_tiers() {
         .await;
 
     let mut config = Config::default();
+    config.embedding_dim = 768;
+    config.embed_model = "test-model".to_string();
     config.ollama_url = mock_server.uri();
 
     let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
