@@ -22,6 +22,7 @@ use cerebrum_core::manifest::{self, read_manifest};
 use cerebrum_core::reembed::reembed;
 use cerebrum_core::schema_probe::read_embedding_width;
 
+#[cfg(not(tarpaulin_include))]
 #[tokio::main]
 async fn main() {
     if let Err(e) = run().await {
@@ -30,6 +31,7 @@ async fn main() {
     }
 }
 
+#[cfg(not(tarpaulin_include))]
 async fn run() -> anyhow::Result<()> {
     let config = apply_env_overlay(Config::default());
 

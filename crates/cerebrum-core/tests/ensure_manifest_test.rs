@@ -141,3 +141,111 @@ async fn dim_mismatch_returns_validation_error() {
     );
     assert!(matches!(err, CerebrumError::Validation(_)));
 }
+
+// ── ensure_manifest: absent table + existing manifest with wrong dim → error ──
+
+#[tokio::test]
+async fn absent_table_existing_manifest_dim_mismatch_errors() {
+    let dir = TempDir::new().unwrap();
+    let conn = open_conn(dir.path()).await;
+
+    // Write a manifest claiming dim=768 before the table exists.
+    let mpath = manifest_path(dir.path(), "memories");
+    write_manifest(&mpath, &Manifest { model: "nomic-embed-text".to_string(), dim: 768 }).unwrap();
+
+    let mut config = Config::default();
+    config.db_path = dir.path().to_path_buf();
+    config.table_name = "memories".to_string();
+    config.embedding_dim = 1024; // disagrees with manifest
+    config.embed_model = "qwen3-embedding:0.6b".to_string();
+
+    let err = ensure_manifest(&conn, dir.path(), &config).await.unwrap_err();
+    assert!(matches!(err, CerebrumError::Validation(_)));
+    assert!(err.to_string().contains("cerebrum-reembed"));
+}
+
+// ── ensure_manifest: table exists + manifest present + dims match → Ok ────────
+
+#[tokio::test]
+async fn table_exists_manifest_present_matching_dim_ok() {
+    let dir = TempDir::new().unwrap();
+    let conn = open_conn(dir.path()).await;
+
+    conn.create_empty_table("memories", make_schema(768))
+        .execute()
+        .await
+        .expect("create table");
+
+    // Pre-write a matching manifest.
+    let mpath = manifest_path(dir.path(), "memories");
+    write_manifest(&mpath, &Manifest { model: "nomic-embed-text".to_string(), dim: 768 }).unwrap();
+
+    let mut config = Config::default();
+    config.db_path = dir.path().to_path_buf();
+    config.table_name = "memories".to_string();
+    config.embedding_dim = 768;
+    config.embed_model = "nomic-embed-text".to_string();
+
+    ensure_manifest(&conn, dir.path(), &config).await.unwrap();
+}
+
+// ── manifest: corrupt file returns Err ───────────────────────────────────────
+
+#[test]
+fn read_manifest_corrupt_file_errors() {
+    let dir = TempDir::new().unwrap();
+    let path = manifest_path(dir.path(), "bad");
+    std::fs::write(&path, b"not json at all {{{{").unwrap();
+    let result = read_manifest(&path);
+    assert!(result.is_err());
+}
+
+// ── manifest: write to unwritable path returns Err ────────────────────────────
+
+#[test]
+fn write_manifest_bad_path_errors() {
+    let path = std::path::PathBuf::from("/nonexistent/dir/x.manifest.json");
+    let m = Manifest { model: "m".to_string(), dim: 1 };
+    let result = write_manifest(&path, &m);
+    assert!(result.is_err());
+}
+
+// ── schema_probe: table with non-FixedSizeList embedding field → Err ──────────
+
+#[tokio::test]
+async fn schema_probe_wrong_field_type_errors() {
+    let dir = TempDir::new().unwrap();
+    let conn = open_conn(dir.path()).await;
+
+    // Create a table where "embedding" is plain Utf8, not FixedSizeList.
+    let bad_schema = Arc::new(Schema::new(Fields::from(vec![
+        Field::new("id", DataType::Utf8, false),
+        Field::new("embedding", DataType::Utf8, false),
+    ])));
+    conn.create_empty_table("bad_table", bad_schema)
+        .execute()
+        .await
+        .expect("create table");
+
+    let err = read_embedding_width(&conn, "bad_table").await.unwrap_err();
+    assert!(matches!(err, CerebrumError::Validation(_)));
+}
+
+// ── schema_probe: table with no embedding field → Err ────────────────────────
+
+#[tokio::test]
+async fn schema_probe_missing_embedding_field_errors() {
+    let dir = TempDir::new().unwrap();
+    let conn = open_conn(dir.path()).await;
+
+    let no_embed_schema = Arc::new(Schema::new(Fields::from(vec![
+        Field::new("id", DataType::Utf8, false),
+    ])));
+    conn.create_empty_table("no_embed", no_embed_schema)
+        .execute()
+        .await
+        .expect("create table");
+
+    let err = read_embedding_width(&conn, "no_embed").await.unwrap_err();
+    assert!(matches!(err, CerebrumError::Validation(_)));
+}

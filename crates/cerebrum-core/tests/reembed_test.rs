@@ -155,3 +155,79 @@ async fn long_content_is_counted_as_truncated() {
 
     assert_eq!(report.truncated, 1);
 }
+
+/// An embedder that returns all-zero vectors.
+struct ZeroEmbedder;
+
+#[async_trait]
+impl Embedder for ZeroEmbedder {
+    async fn embed(&self, _text: &str) -> Result<Vec<f32>> {
+        Ok(vec![0.0_f32; 1024])
+    }
+    fn dimension(&self) -> usize { 1024 }
+}
+
+/// An embedder that returns a vector with a NaN value.
+struct NanEmbedder;
+
+#[async_trait]
+impl Embedder for NanEmbedder {
+    async fn embed(&self, _text: &str) -> Result<Vec<f32>> {
+        let mut v = vec![0.5_f32; 1024];
+        v[0] = f32::NAN;
+        Ok(v)
+    }
+    fn dimension(&self) -> usize { 1024 }
+}
+
+/// verify_dest: all-zero vectors → verified = false.
+#[tokio::test]
+async fn all_zero_vectors_yield_unverified() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = test_config(dir.path());
+    let embedder = ZeroEmbedder;
+
+    let src = cerebrum_core::lancedb_cortex::LanceDBCortex::new(dir.path(), "src", 768)
+        .await
+        .unwrap();
+    src.store(
+        MemoryEntry::builder(MemoryId::new(), "x".to_string())
+            .embedding(vec![0.1_f32; 768])
+            .tier(MemoryTier::Cortex)
+            .build(),
+    )
+    .await
+    .unwrap();
+
+    let report = reembed("src", 768, "dest", &config, &embedder)
+        .await
+        .expect("reembed should not fail");
+    assert!(!report.verified, "all-zero vectors must not verify");
+}
+
+/// verify_dest: NaN in vector → verified = false.
+#[tokio::test]
+async fn nan_vector_yields_unverified() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = test_config(dir.path());
+    let embedder = NanEmbedder;
+
+    let src = cerebrum_core::lancedb_cortex::LanceDBCortex::new(dir.path(), "src", 768)
+        .await
+        .unwrap();
+    src.store(
+        MemoryEntry::builder(MemoryId::new(), "x".to_string())
+            .embedding(vec![0.1_f32; 768])
+            .tier(MemoryTier::Cortex)
+            .build(),
+    )
+    .await
+    .unwrap();
+
+    // NaN may be rejected by lancedb at write time or surfaced as unverified.
+    let result = reembed("src", 768, "dest", &config, &embedder).await;
+    match result {
+        Ok(report) => assert!(!report.verified, "NaN vectors must not verify"),
+        Err(_) => {} // lancedb may reject the write — also acceptable
+    }
+}
